@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.instantly.daily-report</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/zsh</string>
+        <string>/Users/alessandropassariello/instantly-analyzer/run_all.sh</string>
+    </array>
+
+    <!-- Run every day at 07:00 local time -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>7</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <!-- Log stdout and stderr -->
+    <key>StandardOutPath</key>
+    <string>/Users/alessandropassariello/instantly-analyzer/logs/daily_run.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/alessandropassariello/instantly-analyzer/logs/daily_run_error.log</string>
+
+    <!-- Pass environment variables to the script -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>INSTANTLY_API_KEY</key>
+        <string>M2Q2NGMxOWYtYTc3ZS00NDQyLWFmMTEtYTNjNjNmYzUyNTViOmdhWEJDeVJ1ZlNhbw==</string>
+        <key>ANTHROPIC_API_KEY</key>
+        <string>YOUR_ANTHROPIC_API_KEY_HERE</string>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>

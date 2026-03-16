@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Instantly Outreach Dashboard</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<!-- ── Top Nav ─────────────────────────────────────── -->
+<nav class="topbar">
+  <div class="logo">Instantly <span>Analytics</span></div>
+  <ul class="nav-tabs-custom">
+    <li><button class="active" data-target="page-overview">Overview</button></li>
+    <li><button data-target="page-campaigns">Campaigns</button></li>
+    <li><button data-target="page-leads">Leads Explorer</button></li>
+    <li><button data-target="page-hotleads">Hot Leads</button></li>
+    <li><button data-target="page-noreasons">NO Reasons</button></li>
+    <li><button data-target="page-zero">Zero Reply</button></li>
+    <li><button data-target="page-ai" class="nav-ai-btn">✦ AI</button></li>
+    <li><button data-target="page-lookup">Email Lookup</button></li>
+    <li><button data-target="page-handle-lookup">Handle Lookup</button></li>
+  </ul>
+  <div class="topbar-meta">
+    <span id="last-updated-display" class="topbar-updated"></span>
+    <span id="refresh-countdown" class="topbar-refresh"></span>
+  </div>
+</nav>
+
+<!-- ── Date Filter Bar ─────────────────────────────── -->
+<div class="date-filter-bar" id="date-filter-bar">
+  <span class="date-filter-label">Date:</span>
+  <div class="date-filter-btns">
+    <button class="date-btn active" data-mode="all">All time</button>
+    <button class="date-btn" data-mode="today">Today</button>
+    <button class="date-btn" data-mode="yesterday">Yesterday</button>
+    <button class="date-btn" data-mode="last7">Last 7 days</button>
+    <button class="date-btn" data-mode="thismonth">This month</button>
+    <button class="date-btn" data-mode="range">Custom range ▾</button>
+  </div>
+  <div id="date-range-inputs" class="date-range-inputs" style="display:none">
+    <input type="date" id="date-from" title="From">
+    <span class="date-sep">–</span>
+    <input type="date" id="date-to" title="To">
+    <button class="date-btn-apply" id="date-apply-btn">Apply</button>
+  </div>
+  <span id="date-active-badge" class="date-active-badge" style="display:none"></span>
+</div>
+
+<!-- ══════════════════════════════════════════════════
+     PAGE: OVERVIEW
+══════════════════════════════════════════════════ -->
+<div id="page-overview" class="page active">
+
+  <!-- ── Quick Email Lookup card ── -->
+  <div class="quick-lookup-card">
+    <div class="quick-lookup-inner">
+      <div class="quick-lookup-label">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        Email Lookup
+      </div>
+      <div class="quick-lookup-row">
+        <input type="text" id="quickLookupInput" placeholder="Type an email address and press Enter…" autocomplete="off" spellcheck="false">
+        <button id="quickLookupBtn">Search</button>
+        <button id="quickLookupClear" class="btn-clear" style="display:none">✕ Clear</button>
+      </div>
+    </div>
+    <div id="quick-lookup-results"></div>
+  </div>
+
+  <!-- Today's Activity -->
+  <div class="today-section">
+    <div class="today-label">Today's Activity</div>
+    <div class="today-grid">
+      <div class="today-card today-replies">
+        <div class="today-val" id="today-replies">—</div>
+        <div class="today-lbl">Replies Today</div>
+      </div>
+      <div class="today-card today-hot">
+        <div class="today-val" id="today-hot">—</div>
+        <div class="today-lbl">Hot Leads Today</div>
+      </div>
+      <div class="today-card today-no">
+        <div class="today-val" id="today-no">—</div>
+        <div class="today-lbl">NO / Not Interested</div>
+      </div>
+      <div class="today-card today-camps">
+        <div class="today-val" id="today-camps">—</div>
+        <div class="today-lbl">Campaigns Active</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- KPI Cards -->
+  <div class="kpi-grid">
+    <div class="kpi-card kpi-total">
+      <div class="kpi-label">Campaigns</div>
+      <div class="kpi-value" id="kpi-camps">—</div>
+    </div>
+    <div class="kpi-card kpi-total">
+      <div class="kpi-label">Total Leads</div>
+      <div class="kpi-value" id="kpi-leads">—</div>
+      <div class="kpi-sub">emails tracked</div>
+    </div>
+    <div class="kpi-card kpi-total">
+      <div class="kpi-label">Total Inbound</div>
+      <div class="kpi-value" id="kpi-inbound">—</div>
+      <div class="kpi-sub">replied</div>
+    </div>
+    <div class="kpi-card kpi-yes">
+      <div class="kpi-label">YES</div>
+      <div class="kpi-value" id="kpi-yes">—</div>
+    </div>
+    <div class="kpi-card kpi-int">
+      <div class="kpi-label">Interested</div>
+      <div class="kpi-value" id="kpi-int">—</div>
+    </div>
+    <div class="kpi-card kpi-no">
+      <div class="kpi-label">NO</div>
+      <div class="kpi-value" id="kpi-no">—</div>
+    </div>
+    <div class="kpi-card kpi-ni">
+      <div class="kpi-label">Not Interested</div>
+      <div class="kpi-value" id="kpi-ni">—</div>
+    </div>
+    <div class="kpi-card kpi-ar">
+      <div class="kpi-label">Auto Reply</div>
+      <div class="kpi-value" id="kpi-ar">—</div>
+    </div>
+    <div class="kpi-card kpi-pos">
+      <div class="kpi-label">Positive Rate</div>
+      <div class="kpi-value" id="kpi-pos-rate">—</div>
+      <div class="kpi-sub">of total replies</div>
+    </div>
+    <div class="kpi-card kpi-neg">
+      <div class="kpi-label">Negative Rate</div>
+      <div class="kpi-value" id="kpi-neg-rate">—</div>
+      <div class="kpi-sub">of total replies</div>
+    </div>
+    <div class="kpi-card kpi-zero">
+      <div class="kpi-label">Zero-Reply</div>
+      <div class="kpi-value" id="kpi-zero">—</div>
+      <div class="kpi-sub">campaigns</div>
+    </div>
+  </div>
+
+  <!-- Charts row -->
+  <div class="charts-row">
+    <div class="chart-card">
+      <h3>Top 20 Campaigns — Reply Breakdown</h3>
+      <div class="chart-wrap-tall">
+        <canvas id="chartTopCamps"></canvas>
+      </div>
+    </div>
+    <div class="chart-card">
+      <h3>Classification Distribution</h3>
+      <div class="chart-wrap">
+        <canvas id="chartDonut"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- AI Recommendations -->
+  <div class="section-card">
+    <div class="section-header">
+      <h3>AI Recommendations <span class="hint">— top leads to contact today</span></h3>
+      <button class="btn-ai-action" id="ai-rec-btn" onclick="loadRecommendations()">✦ Get AI Picks</button>
+    </div>
+    <div id="ai-rec-content">
+      <div class="ai-rec-empty">Click "Get AI Picks" to identify the top 5 leads to contact today.</div>
+    </div>
+  </div>
+
+  <!-- Ranking Table -->
+  <div class="section-card">
+    <div class="section-header">
+      <h3>Top 15 Campaigns by Positive Total</h3>
+    </div>
+    <div class="table-wrap">
+      <table id="rankTable">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Campaign</th>
+            <th>Inbound</th>
+            <th>YES</th>
+            <th>Interested</th>
+            <th>NO</th>
+            <th>Positive Total</th>
+            <th style="min-width:150px">Positive Rate</th>
+            <th>Score</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+</div><!-- /page-overview -->
+
+
+<!-- ══════════════════════════════════════════════════
+     PAGE: CAMPAIGN PERFORMANCE
+══════════════════════════════════════════════════ -->
+<div id="page-campaigns" class="page">
+
+  <div class="section-card">
+    <h3>All Campaigns — Reply Mix</h3>
+    <div class="stacked-scroll">
+      <div style="min-width:900px;height:340px">
+        <canvas id="chartStacked" style="width:100%;height:340px"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <div class="section-card">
+    <div class="section-header">
+      <h3>Campaign Performance <span class="hint">— click headers to sort</span></h3>
+      <button class="btn-download" onclick="downloadCampaignCSV()">⬇ Download CSV</button>
+    </div>
+    <div class="table-wrap">
+      <table id="campTable">
+        <thead>
+          <tr>
+            <th data-col="campaign_name">Campaign</th>
+            <th data-col="total_inbound">Inbound</th>
+            <th data-col="yes">YES</th>
+            <th data-col="interested">Interested</th>
+            <th data-col="no">NO</th>
+            <th data-col="not_interested">Not Interested</th>
+            <th data-col="auto_reply">Auto Reply</th>
+            <th data-col="positive_total">Positive</th>
+            <th data-col="positive_rate" style="min-width:130px">Positive Rate</th>
+            <th data-col="negative_rate" style="min-width:130px">Negative Rate</th>
+            <th data-col="no_reply_rate" style="min-width:120px">NO Rate</th>
+            <th data-col="health_score">Score</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+</div><!-- /page-campaigns -->
+
+
+<!-- ══════════════════════════════════════════════════
+     PAGE: LEADS EXPLORER
+══════════════════════════════════════════════════ -->
+<div id="page-leads" class="page">
+
+  <div class="section-card">
+    <div class="section-header">
+      <h3>Leads Explorer</h3>
+      <button class="btn-download" onclick="downloadLeadsCSV()">⬇ Download Filtered CSV</button>
+    </div>
+
+    <!-- Filter Bar -->
+    <div class="filter-bar">
+      <input type="text" id="leadsSearch" class="search-main" placeholder="Search email, handle, campaign, reply text…">
+
+      <select id="filterCampaign">
+        <option value="">All Campaigns</option>
+      </select>
+
+      <select id="filterClass">
+        <option value="">All Classifications</option>
+        <option value="YES">YES</option>
+        <option value="INTERESTED">INTERESTED</option>
+        <option value="NO">NO</option>
+        <option value="NOT_INTERESTED">NOT INTERESTED</option>
+        <option value="AUTO_REPLY">AUTO REPLY</option>
+      </select>
+
+      <button class="btn-filter" id="btnPositive">Positive Only</button>
+      <button class="btn-filter" id="btnAuto">Auto Replies</button>
+      <button class="btn-filter btn-reset" id="btnReset">Reset Filters</button>
+      <span class="result-count" id="leadsCount"></span>
+    </div>
+
+    <!-- Leads Table -->
+    <div class="table-wrap">
+      <table id="leadsTable">
+        <thead>
+          <tr>
+            <th data-lcol="creator_handle">Handle</th>
+            <th data-lcol="email">Email</th>
+            <th data-lcol="campaign_name">Campaign</th>
+            <th data-lcol="classification">Classification</th>
+            <th data-lcol="reason">Reason / Decline</th>
+            <th data-lcol="clean_reply_summary">Reply Summary</th>
+            <th style="width:52px;text-align:center">AI</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <div class="pagination-bar" id="leadsPagination"></div>
+  </div>
+
+</div><!-- /page-leads -->
+
+
+<!-- ══════════════════════════════════════════════════
+     PAGE: EMAIL LOOKUP
+══════════════════════════════════════════════════ -->
+<div id="page-lookup" class="page">
+
+  <div class="lookup-wrap">
+    <h2>Email Lookup</h2>
+    <p>Search any email to see its campaign, classification, reason, and reply text.</p>
+
+    <div class="lookup-input-row">
+      <input type="text" id="lookupInput" placeholder="e.g. example@gmail.com" autocomplete="off" spellcheck="false">
+      <button id="lookupBtn">Search</button>
+    </div>
+
+    <div id="lookup-results"></div>
+  </div>
+
+</div><!-- /page-lookup -->
+
+
+<!-- ══════════════════════════════════════════════════
+     PAGE: HOT LEADS
+══════════════════════════════════════════════════ -->
+<div id="page-hotleads" class="page">
+
+  <div class="kpi-grid">
+    <div class="kpi-card kpi-hot">
+      <div class="kpi-label">Hot Leads</div>
+      <div class="kpi-value" id="hl-total">—</div>
+    </div>
+    <div class="kpi-card kpi-yes">
+      <div class="kpi-label">YES</div>
+      <div class="kpi-value" id="hl-yes">—</div>
+    </div>
+    <div class="kpi-card kpi-int">
+      <div class="kpi-label">Interested</div>
+      <div class="kpi-value" id="hl-int">—</div>
+    </div>
+    <div class="kpi-card kpi-zero">
+      <div class="kpi-label">Needs Review</div>
+      <div class="kpi-value" id="hl-review">—</div>
+      <div class="kpi-sub">fallback YES</div>
+    </div>
+  </div>
+
+  <div class="section-card">
+    <div class="section-header">
+      <h3>Hot Leads <span class="hint">— YES + INTERESTED replies</span></h3>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <button class="btn-copy-all" id="hlCopyAllBtn" onclick="copyAllHotEmails()">Copy All Emails</button>
+        <button class="btn-download" onclick="downloadHotLeadsCSV()">⬇ Download CSV</button>
+      </div>
+    </div>
+
+    <div class="filter-bar">
+      <input type="text" id="hlSearch" class="search-main" placeholder="Search email, handle, campaign, reply text…">
+      <select id="hlFilterCampaign"><option value="">All Campaigns</option></select>
+      <select id="hlFilterClass">
+        <option value="">All Hot</option>
+        <option value="YES">YES only</option>
+        <option value="INTERESTED">INTERESTED only</option>
+      </select>
+      <button class="btn-filter" id="hlBtnReview">Needs Review</button>
+      <button class="btn-filter btn-reset" id="hlBtnReset">Reset</button>
+      <span class="result-count" id="hlCount"></span>
+    </div>
+
+    <div class="table-wrap">
+      <table id="hlTable">
+        <thead>
+          <tr>
+            <th data-hlcol="creator_handle">Handle</th>
+            <th data-hlcol="email">Email</th>
+            <th data-hlcol="campaign_name">Campaign</th>
+            <th data-hlcol="classification">Status</th>
+            <th>Reply Preview</th>
+            <th style="width:72px;text-align:center">Copy</th>
+            <th style="width:52px;text-align:center">AI</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="pagination-bar" id="hlPagination"></div>
+  </div>
+
+</div><!-- /page-hotleads -->
+
+
+<!-- ══════════════════════════════════════════════════
+     PAGE: NO REASONS
+══════════════════════════════════════════════════ -->
+<div id="page-noreasons" class="page">
+
+  <div class="kpi-grid" id="no-reasons-kpis"></div>
+
+  <div class="section-card">
+    <div class="section-header">
+      <h3>NO &amp; NOT INTERESTED Leads <span class="hint">— with decline category</span></h3>
+      <button class="btn-download" onclick="downloadNoReasonsCSV()">⬇ Download CSV</button>
+    </div>
+    <div class="filter-bar">
+      <input type="text" id="noSearch" class="search-main" placeholder="Search email, handle, campaign, reason…">
+      <select id="noFilterCampaign"><option value="">All Campaigns</option></select>
+      <select id="noFilterClass">
+        <option value="">NO + NOT INTERESTED</option>
+        <option value="NO">NO only</option>
+        <option value="NOT_INTERESTED">NOT INTERESTED only</option>
+      </select>
+      <select id="noFilterCategory"><option value="">All Decline Categories</option></select>
+      <button class="btn-filter btn-reset" id="noBtnReset">Reset</button>
+      <span class="result-count" id="noCount"></span>
+    </div>
+    <div class="table-wrap">
+      <table id="noTable">
+        <thead>
+          <tr>
+            <th data-nocol="creator_handle">Handle</th>
+            <th data-nocol="email">Email</th>
+            <th data-nocol="campaign_name">Campaign</th>
+            <th data-nocol="classification">Status</th>
+            <th data-nocol="decline_category">Decline Category</th>
+            <th data-nocol="reason">What They Said</th>
+            <th data-nocol="clean_reply_summary">Full Summary</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <div class="pagination-bar" id="noPagination"></div>
+  </div>
+
+</div><!-- /page-noreasons -->
+
+
+<!-- ══════════════════════════════════════════════════
+     PAGE: ZERO REPLY CAMPAIGNS
+══════════════════════════════════════════════════ -->
+<div id="page-zero" class="page">
+
+  <div class="section-card">
+    <div class="section-header">
+      <h3>Zero Reply Campaigns <span class="hint">— campaigns with 0 inbound replies</span></h3>
+      <span class="result-count" id="zero-count"></span>
+    </div>
+    <div class="table-wrap">
+      <table id="zeroTable">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Campaign Name</th>
+            <th style="text-align:center">Inbound</th>
+            <th style="text-align:center">Status</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+</div><!-- /page-zero -->
+
+
+<!-- ══════════════════════════════════════════════════
+     PAGE: AI ASSISTANT
+══════════════════════════════════════════════════ -->
+<div id="page-ai" class="page">
+  <div class="ai-chat-page">
+
+    <div class="ai-chat-messages" id="ai-chat-messages">
+      <div class="ai-chat-welcome">
+        <div class="ai-chat-welcome-icon">✦</div>
+        <h3>AI Outreach Assistant</h3>
+        <p>Ask anything about your campaigns and leads. I can analyze performance, draft replies, and suggest strategies.</p>
+      </div>
+    </div>
+
+    <div class="ai-chat-quick-actions">
+      <button class="ai-chip" onclick="quickChat('Which campaigns are performing best and why?')">Top campaigns</button>
+      <button class="ai-chip" onclick="quickChat('What are the most common reasons creators say no?')">Rejection patterns</button>
+      <button class="ai-chip" onclick="quickChat('What follow-up strategy do you recommend for INTERESTED leads?')">Follow-up strategy</button>
+      <button class="ai-chip" onclick="quickChat('Draft a TikTok Shop affiliate outreach email I can use as a template')">Draft template</button>
+      <button class="ai-chip" onclick="quickChat('Which campaigns have the highest health score and what makes them effective?')">Best campaigns</button>
+    </div>
+
+    <div class="ai-chat-input-bar">
+      <textarea id="ai-chat-input" class="ai-chat-input" placeholder="Ask about your campaigns, leads, or request a draft…" rows="1"></textarea>
+      <button class="ai-chat-send" id="ai-chat-send" onclick="sendChatMessage()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+      </button>
+    </div>
+
+  </div>
+</div><!-- /page-ai -->
+
+
+<!-- ── AI Reply Coach Panel ──────────────────────────────────── -->
+<div id="ai-panel" class="ai-panel">
+  <div class="ai-panel-header">
+    <div class="ai-panel-title">
+      <span class="ai-glyph">✦</span> AI Reply Coach
+    </div>
+    <button class="ai-panel-close" onclick="closeAIPanel()">×</button>
+  </div>
+
+  <div class="ai-panel-body">
+
+    <!-- Lead info -->
+    <div class="ai-lead-info" id="ai-lead-info">
+      <div class="ai-empty">No lead selected</div>
+    </div>
+
+    <!-- Analysis -->
+    <div class="ai-section">
+      <div class="ai-section-label">Analysis</div>
+      <div id="ai-analysis-content" class="ai-analysis-content">
+        <div class="ai-empty">Select a lead to begin</div>
+      </div>
+    </div>
+
+    <!-- Draft Reply -->
+    <div class="ai-section">
+      <div class="ai-section-label">Draft Reply</div>
+      <textarea id="ai-reply-textarea" class="ai-reply-textarea" placeholder="Click Generate to create a personalised reply…"></textarea>
+      <div class="ai-reply-instruction-row">
+        <input type="text" id="ai-reply-instruction" class="ai-reply-instruction" placeholder="Extra instructions (optional)…">
+      </div>
+      <div class="ai-reply-actions">
+        <button class="btn-ai-primary" id="ai-generate-btn" onclick="generateReply(false)">Generate Reply</button>
+        <button class="btn-ai-secondary" id="ai-followup-btn" onclick="generateReply(true)">Follow-up</button>
+        <button class="btn-ai-ghost" id="ai-copy-btn" onclick="copyReply()">Copy</button>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<div id="ai-panel-overlay" class="ai-panel-overlay" onclick="closeAIPanel()"></div>
+
+
+<!-- ══════════════════════════════════════════════════
+     PAGE: HANDLE LOOKUP
+══════════════════════════════════════════════════ -->
+<div id="page-handle-lookup" class="page">
+
+  <div class="lookup-wrap">
+    <h2>Handle Lookup</h2>
+    <p>Search any creator's TikTok/social handle to find all their email threads across every campaign.</p>
+
+    <div class="lookup-input-row">
+      <input type="text" id="handleLookupInput" placeholder="e.g. buysbybry" autocomplete="off" spellcheck="false">
+      <button id="handleLookupBtn">Search</button>
+    </div>
+
+    <div id="handle-lookup-results"></div>
+  </div>
+
+</div><!-- /page-handle-lookup -->
+
+
+<!-- ── Scripts ─────────────────────────────────────── -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="data.js"></script>
+<script src="app.js"></script>
+
+</body>
+</html>

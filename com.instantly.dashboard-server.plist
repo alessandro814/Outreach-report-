@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.instantly.dashboard-server</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/python3</string>
+        <string>/Users/alessandropassariello/instantly-analyzer/server.py</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/alessandropassariello/instantly-analyzer</string>
+
+    <!-- Start at login and keep alive if it crashes -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Environment variables -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PORT</key>
+        <string>5001</string>
+        <key>INSTANTLY_API_KEY</key>
+        <string>M2Q2NGMxOWYtYTc3ZS00NDQyLWFmMTEtYTNjNjNmYzUyNTViOmdhWEJDeVJ1ZlNhbw==</string>
+        <key>ANTHROPIC_API_KEY</key>
+        <string>YOUR_ANTHROPIC_API_KEY_HERE</string>
+        <key>PATH</key>
+        <string>/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+
+    <!-- Logs -->
+    <key>StandardOutPath</key>
+    <string>/Users/alessandropassariello/instantly-analyzer/logs/server.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/alessandropassariello/instantly-analyzer/logs/server_error.log</string>
+
+    <!-- Throttle restarts — wait 10s before restarting on crash -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+</dict>
+</plist>
