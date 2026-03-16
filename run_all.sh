@@ -44,3 +44,13 @@ echo "    hot_leads_report.csv         (YES + INTERESTED only)"
 echo "    zero_reply_campaigns.csv     (campaigns with 0 inbound)"
 echo "============================================================"
 echo ""
+
+# ── Step 4: Push updated data to GitHub → triggers Vercel auto-deploy ──────────
+echo "[4/4] Pushing data.js + data.json to GitHub (Vercel auto-deploy)..."
+git add data.js data.json
+git diff --cached --quiet && echo "  No data changes — nothing to push." || (
+  git commit -m "data: auto-update $(date '+%Y-%m-%d %H:%M')" && \
+  git push origin main && \
+  echo "  Pushed — Vercel will redeploy in ~30 seconds."
+)
+echo ""

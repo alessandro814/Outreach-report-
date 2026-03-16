@@ -101,4 +101,8 @@ with open('data.js', 'w', encoding='utf-8') as f:
     json.dump(data, f, ensure_ascii=False, indent=2)
     f.write(';\n')
 
-print(f"data.js generated — {len(campaigns)} campaigns, {len(leads)} leads — {now}")
+# Also write data.json (pure JSON) — used by the Vercel API server
+with open('data.json', 'w', encoding='utf-8') as f:
+    json.dump(data, f, ensure_ascii=False, indent=2)
+
+print(f"data.js + data.json generated — {len(campaigns)} campaigns, {len(leads)} leads — {now}")
