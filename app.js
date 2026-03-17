@@ -2,7 +2,17 @@
    Instantly Outreach Dashboard — app.js
 ───────────────────────────────────────────────────── */
 
-const D = DASHBOARD_DATA;
+let D = (typeof DASHBOARD_DATA !== 'undefined') ? DASHBOARD_DATA : { last_updated: '', campaigns: [], leads: [] };
+
+// ── AI backend URL ────────────────────────────────────────────────────────────
+// localhost  → talk to local Flask server on port 5000
+// production → use Vercel's own /api/* serverless endpoints (same origin)
+const _isLocal = window.location.hostname === 'localhost' ||
+                 window.location.hostname === '127.0.0.1';
+const AI_BASE_URL = _isLocal ? 'http://localhost:5000' : '';
+
+// ── localStorage key for dashboard data cache ────────────────────────────────
+const DATA_CACHE_KEY = 'instantly_dashboard_cache_v2';
 
 // ── colours ──────────────────────────────────────────
 const COLORS = {
@@ -41,7 +51,8 @@ let chartStacked  = null;
 /* ═══════════════════════════════════════════════════
    INIT
 ═══════════════════════════════════════════════════ */
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+  await initData();
   showLastUpdated();
   startAutoRefresh();
   setupDateFilter();
@@ -70,7 +81,116 @@ document.addEventListener('DOMContentLoaded', () => {
   renderZeroReplyCampaigns();
   setupAIChatInput();
   setupHandleLookup();
+  checkAIStatus();
 });
+
+/* ═══════════════════════════════════════════════════
+   DATA LOADING — remote → localStorage → bundled
+═══════════════════════════════════════════════════ */
+
+function isValidData(d) {
+  return d && typeof d === 'object' &&
+    (Array.isArray(d.campaigns) && d.campaigns.length > 0 ||
+     Array.isArray(d.leads)     && d.leads.length     > 0);
+}
+
+async function initData() {
+  const remoteUrl = (typeof window.DASHBOARD_REMOTE_URL !== 'undefined')
+    ? window.DASHBOARD_REMOTE_URL : '';
+
+  let data    = null;
+  let source  = 'bundled';
+  let warning = null;
+
+  // ── 1. Try remote source (Google Sheets via Apps Script) ──────────────────
+  if (remoteUrl) {
+    try {
+      const resp = await fetch(remoteUrl, { cache: 'no-cache' });
+      if (resp.ok) {
+        const raw = await resp.json();
+        if (raw && raw.error) {
+          warning = `Remote source error: ${raw.error}`;
+        } else if (isValidData(raw)) {
+          data   = raw;
+          source = 'remote';
+          try { localStorage.setItem(DATA_CACHE_KEY, JSON.stringify(raw)); } catch (_) {}
+        } else {
+          warning = 'Remote data returned empty dataset — using cached snapshot';
+        }
+      } else {
+        warning = `Remote fetch returned HTTP ${resp.status} — using cached snapshot`;
+      }
+    } catch (e) {
+      warning = 'Cannot reach remote data source — using cached snapshot';
+    }
+  }
+
+  // ── 2. Try localStorage cache ─────────────────────────────────────────────
+  if (!data) {
+    try {
+      const raw = localStorage.getItem(DATA_CACHE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (isValidData(parsed)) {
+          data   = parsed;
+          source = 'cache';
+          if (!warning && remoteUrl) warning = 'Showing cached data — remote source unavailable';
+        }
+      }
+    } catch (_) {}
+  }
+
+  // ── 3. Fall back to bundled data.js ──────────────────────────────────────
+  if (!data) {
+    const bundled = (typeof DASHBOARD_DATA !== 'undefined') ? DASHBOARD_DATA : null;
+    if (isValidData(bundled)) {
+      data   = bundled;
+      source = 'bundled';
+      if (!warning && remoteUrl) warning = 'Showing bundled data — remote source and cache unavailable';
+    } else {
+      // All sources empty — still use bundled to avoid crash, show warning
+      data   = bundled || { last_updated: '', campaigns: [], leads: [] };
+      source = 'empty';
+      warning = 'No data available yet — pipeline may not have run. Check back in a few minutes.';
+    }
+  }
+
+  // ── Set global D ─────────────────────────────────────────────────────────
+  D = window.D = data;
+
+  // ── Update UI ────────────────────────────────────────────────────────────
+  updateDataSourceUI(source, data.last_updated, warning);
+}
+
+function updateDataSourceUI(source, lastUpdated, warning) {
+  // Badge in topbar
+  const badge = document.getElementById('data-source-badge');
+  if (badge) {
+    const labels = {
+      remote:  { text: '● Live',    cls: 'ds-live'    },
+      cache:   { text: '● Cached',  cls: 'ds-cached'  },
+      bundled: { text: '● Bundled', cls: 'ds-bundled' },
+      empty:   { text: '● No data', cls: 'ds-error'   },
+    };
+    const { text, cls } = labels[source] || labels.bundled;
+    badge.textContent  = text;
+    badge.className    = `data-source-badge ${cls}`;
+    badge.title        = lastUpdated ? `Data as of: ${lastUpdated}` : 'Data timestamp unknown';
+  }
+
+  // Warning banner
+  const banner = document.getElementById('data-warning-banner');
+  if (banner) {
+    if (warning) {
+      document.getElementById('data-warning-text').textContent = warning;
+      const ageEl = document.getElementById('data-warning-age');
+      if (ageEl && lastUpdated) ageEl.textContent = ` (snapshot: ${lastUpdated})`;
+      banner.style.display = '';
+    } else {
+      banner.style.display = 'none';
+    }
+  }
+}
 
 /* ── Tabs ─────────────────────────────────────────────── */
 function setupTabs() {
@@ -81,6 +201,7 @@ function setupTabs() {
       btn.classList.add('active');
       document.getElementById(btn.dataset.target).classList.add('active');
       if (btn.dataset.target === 'page-campaigns' && !chartStacked) renderStackedChart();
+      if (btn.dataset.target === 'page-ai') checkAIStatus();
     });
   });
 }
@@ -761,6 +882,57 @@ let aiChatHistory     = [];
    AI — SSE STREAMING HELPER
 ═══════════════════════════════════════════════════ */
 
+/* ═══════════════════════════════════════════════════
+   AI STATUS
+═══════════════════════════════════════════════════ */
+
+async function checkAIStatus() {
+  renderAIStatus('checking', '');
+  try {
+    const resp = await fetch(AI_BASE_URL + '/api/health', { method: 'GET' });
+    if (!resp.ok) { renderAIStatus('offline', 'Backend returned an error'); return; }
+    const data = await resp.json();
+    if (!data.anthropic_configured) {
+      renderAIStatus('no_key', 'Set ANTHROPIC_API_KEY on the backend');
+    } else {
+      renderAIStatus('online', data.last_data_refresh ? 'Data: ' + data.last_data_refresh : '');
+    }
+  } catch (_) {
+    renderAIStatus('disconnected', 'Run: python3 server.py');
+  }
+}
+
+function renderAIStatus(state, detail) {
+  const el = document.getElementById('ai-status-bar');
+  if (!el) return;
+  const map = {
+    checking:     { text: 'Checking AI…',        cls: 'checking' },
+    online:       { text: 'AI online',            cls: 'online'   },
+    offline:      { text: 'AI offline',           cls: 'offline'  },
+    no_key:       { text: 'Missing API key',      cls: 'nokey'    },
+    disconnected: { text: 'Backend disconnected', cls: 'offline'  },
+  };
+  const { text, cls } = map[state] || map.offline;
+  el.className = 'ai-status-bar ai-status-' + cls;
+  el.innerHTML =
+    `<span class="ai-status-dot"></span>` +
+    `<span class="ai-status-text">${text}</span>` +
+    (detail ? `<span class="ai-status-detail">${esc(detail)}</span>` : '');
+}
+
+function friendlyError(msg) {
+  if (!msg) return 'Unknown error';
+  if (msg.includes('Failed to fetch') || msg.includes('NetworkError') || msg.includes('net::')) {
+    return 'Cannot reach backend. Make sure server.py is running on port 5000.';
+  }
+  try { const j = JSON.parse(msg); if (j.error) return j.error; } catch (_) {}
+  return msg;
+}
+
+/* ═══════════════════════════════════════════════════
+   STREAMING HELPER
+═══════════════════════════════════════════════════ */
+
 async function streamFromAPI(url, body, onChunk, onDone, onError) {
   try {
     const resp = await fetch(url, {
@@ -769,8 +941,9 @@ async function streamFromAPI(url, body, onChunk, onDone, onError) {
       body: JSON.stringify(body),
     });
     if (!resp.ok) {
-      const msg = await resp.text();
-      if (onError) onError(msg);
+      let msg = await resp.text();
+      try { msg = JSON.parse(msg).error || msg; } catch (_) {}
+      if (onError) onError(friendlyError(msg));
       return;
     }
     const reader  = resp.body.getReader();
@@ -797,7 +970,7 @@ async function streamFromAPI(url, body, onChunk, onDone, onError) {
     }
     onDone();
   } catch (e) {
-    if (onError) onError(e.message);
+    if (onError) onError(friendlyError(e.message));
   }
 }
 
@@ -859,15 +1032,21 @@ async function runAnalysis(email, campaignName) {
   const el = document.getElementById('ai-analysis-content');
   el.innerHTML = '<div class="ai-loading"><span class="ai-spinner"></span> Analysing…</div>';
   try {
-    const resp = await fetch('/api/analyze', {
+    const resp = await fetch(AI_BASE_URL + '/api/analyze', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, campaign_name: campaignName }),
     });
+    if (!resp.ok) {
+      let msg = await resp.text();
+      try { msg = JSON.parse(msg).error || msg; } catch (_) {}
+      el.innerHTML = `<div class="ai-error">${esc(friendlyError(msg))}</div>`;
+      return;
+    }
     const data = await resp.json();
     renderAnalysis(data);
   } catch (e) {
-    el.innerHTML = `<div class="ai-error">Analysis failed: ${esc(e.message)}</div>`;
+    el.innerHTML = `<div class="ai-error">${esc(friendlyError(e.message))}</div>`;
   }
 }
 
@@ -911,7 +1090,7 @@ function generateReply(followup = false) {
   genBtn.textContent = 'Generating…';
 
   streamFromAPI(
-    '/api/reply',
+    AI_BASE_URL + '/api/reply',
     { email: currentAILead.email, campaign_name: currentAILead.campaign_name, instruction, followup },
     text  => { textarea.value += text; },
     ()    => { genBtn.disabled = false; genBtn.textContent = 'Regenerate'; },
@@ -930,6 +1109,61 @@ function copyReply() {
 }
 
 /* ═══════════════════════════════════════════════════
+   AI PANEL — RECOMMEND-REPLY (combined)
+═══════════════════════════════════════════════════ */
+
+async function runRecommendReply() {
+  if (!currentAILead) return;
+  const el      = document.getElementById('ai-rec-reply-content');
+  const btn     = document.getElementById('ai-rec-reply-btn');
+  const lead    = currentAILead;
+  if (!el || !btn) return;
+
+  btn.disabled = true;
+  el.innerHTML = '<div class="ai-loading"><span class="ai-spinner"></span> Getting recommendation…</div>';
+
+  try {
+    const resp = await fetch(AI_BASE_URL + '/api/recommend-reply', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email:          lead.email,
+        campaign_name:  lead.campaign_name,
+        classification: lead.classification,
+        reply_text:     lead.reply_text  || '',
+        reason:         lead.reason      || '',
+      }),
+    });
+    if (!resp.ok) {
+      let msg = await resp.text();
+      try { msg = JSON.parse(msg).error || msg; } catch (_) {}
+      el.innerHTML = `<div class="ai-error">${esc(friendlyError(msg))}</div>`;
+      btn.disabled = false;
+      return;
+    }
+    const d = await resp.json();
+    const conf = d.confidence != null ? Math.round(d.confidence * 100) + '%' : '—';
+    const hot  = d.hot_lead ? '<span class="badge badge-YES">HOT</span>' : '';
+    el.innerHTML = `
+      <div class="ai-rec-reply-row"><strong>Interpretation:</strong> ${esc(d.interpretation || '—')}</div>
+      <div class="ai-rec-reply-row">
+        <strong>Action:</strong> ${esc(d.recommended_action || '—')}
+        &nbsp;${hot}&nbsp;<span class="ai-rec-conf">Confidence: ${conf}</span>
+      </div>
+      <div class="ai-rec-reply-label">Suggested reply:</div>
+      <textarea class="ai-reply-textarea" style="height:120px" readonly>${esc(d.suggested_reply || '')}</textarea>
+      <button class="btn-ai-ghost" style="margin-top:6px" onclick="
+        navigator.clipboard.writeText(document.querySelector('#ai-rec-reply-content textarea').value);
+        this.textContent='Copied!'; setTimeout(()=>this.textContent='Copy reply',1500)
+      ">Copy reply</button>
+    `;
+  } catch (e) {
+    el.innerHTML = `<div class="ai-error">${esc(friendlyError(e.message))}</div>`;
+  }
+  btn.disabled = false;
+}
+
+/* ═══════════════════════════════════════════════════
    AI RECOMMENDATIONS
 ═══════════════════════════════════════════════════ */
 
@@ -942,15 +1176,22 @@ async function loadRecommendations() {
   content.innerHTML = '<div class="ai-loading"><span class="ai-spinner"></span> Getting AI recommendations…</div>';
 
   try {
-    const resp = await fetch('/api/recommendations', {
+    const resp = await fetch(AI_BASE_URL + '/api/recommendations', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({}),
     });
+    if (!resp.ok) {
+      let msg = await resp.text();
+      try { msg = JSON.parse(msg).error || msg; } catch (_) {}
+      content.innerHTML = `<div class="ai-error">${esc(friendlyError(msg))}</div>`;
+      btn.disabled = false; btn.textContent = '✦ Refresh';
+      return;
+    }
     const data = await resp.json();
     renderRecommendations(data.recommendations || []);
   } catch (e) {
-    content.innerHTML = `<div class="ai-error">Failed: ${esc(e.message)}</div>`;
+    content.innerHTML = `<div class="ai-error">${esc(friendlyError(e.message))}</div>`;
   }
 
   btn.disabled    = false;
@@ -1017,7 +1258,7 @@ function sendChatMessage() {
   let aiText = '';
 
   streamFromAPI(
-    '/api/chat',
+    AI_BASE_URL + '/api/chat',
     { message: msg, history: aiChatHistory.slice(-8) },
     text => {
       aiText += text;
@@ -1029,7 +1270,7 @@ function sendChatMessage() {
       sendBtn.disabled = false;
     },
     err => {
-      aiBubble.textContent = `Error: ${err}`;
+      aiBubble.textContent = friendlyError(err);
       sendBtn.disabled = false;
     },
   );
@@ -1284,8 +1525,24 @@ function quickChat(msg) {
 
 function showLastUpdated() {
   const el = document.getElementById('last-updated-display');
-  if (!el || !D.last_updated) return;
-  el.textContent = `Updated ${D.last_updated}`;
+  if (!el) return;
+  if (!D.last_updated) { el.textContent = ''; return; }
+  // Show relative time + absolute timestamp on hover
+  const abs = D.last_updated;
+  try {
+    const d      = new Date(abs.replace(' ', 'T'));
+    const diffMs = Date.now() - d.getTime();
+    const diffM  = Math.round(diffMs / 60000);
+    let rel;
+    if      (diffM <  2)  rel = 'just now';
+    else if (diffM < 60)  rel = `${diffM}m ago`;
+    else if (diffM < 120) rel = '1h ago';
+    else                  rel = `${Math.round(diffM / 60)}h ago`;
+    el.textContent = `Updated ${rel}`;
+    el.title       = abs;
+  } catch (_) {
+    el.textContent = `Updated ${abs}`;
+  }
 }
 
 /* ═══════════════════════════════════════════════════
