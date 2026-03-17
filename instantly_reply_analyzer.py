@@ -49,11 +49,33 @@ def extract_creator_handle(text: str, email: str) -> str:
     return ''
 
 
+def _fetch_with_retry(url, retries=5):
+    """GET a URL with automatic retry on connection errors and rate limits."""
+    for attempt in range(retries):
+        try:
+            r = requests.get(url, headers=headers, timeout=30)
+        except requests.exceptions.ConnectionError as e:
+            wait = 15 * (attempt + 1)
+            print(f"  [connection error] attempt {attempt+1}/{retries}, retrying in {wait}s... ({e})")
+            time.sleep(wait)
+            continue
+        if r.status_code == 429:
+            wait = 65 if attempt == 0 else 120
+            print(f"  [rate limit] waiting {wait}s...")
+            time.sleep(wait)
+            continue
+        return r
+    print(f"  [failed] {retries} attempts exhausted for: {url}")
+    return None
+
+
 def get_campaigns():
     all_items = []
     url = f"{BASE}/campaigns?limit=100"
     while True:
-        r = requests.get(url, headers=headers)
+        r = _fetch_with_retry(url)
+        if r is None:
+            break
         data = r.json()
         all_items.extend(data.get("items", []))
         next_cursor = data.get("next_starting_after")
@@ -63,37 +85,56 @@ def get_campaigns():
     return all_items
 
 
-def get_leads(campaign_id):
-    r = requests.post(
-        f"{BASE}/leads/list",
-        headers=headers,
-        json={"campaign_id": campaign_id}
-    )
-    return r.json().get("items", [])
+def get_replies(campaign_id):
+    """Fetch ALL inbound replies for a campaign via full cursor pagination."""
+    all_items = []
+    starting_after = None
+    page = 0
 
+    while True:
+        page += 1
+        url = f"{BASE}/emails?campaign_id={campaign_id}&is_inbound=true&limit=100"
+        if starting_after:
+            url += f"&starting_after={starting_after}"
 
-def get_replies(campaign_id, retries=5):
-    for attempt in range(retries):
-        try:
-            r = requests.get(
-                f"{BASE}/emails?campaign_id={campaign_id}&is_inbound=true",
-                headers=headers,
-                timeout=30,
-            )
-        except requests.exceptions.ConnectionError as e:
-            wait = 15 * (attempt + 1)
-            print(f"  [connection error] attempt {attempt+1}/{retries}, retrying in {wait}s... ({e})")
-            time.sleep(wait)
-            continue
+        r = _fetch_with_retry(url)
+        if r is None:
+            print(f"  [pagination] page {page}: request failed — stopping.")
+            break
+
         data = r.json()
-        if r.status_code == 429:
-            wait = 65 if attempt == 0 else 120
-            print(f"  [rate limit] waiting {wait}s...")
-            time.sleep(wait)
-            continue
-        return data.get("items", [])
-    print(f"  [failed] could not fetch replies for campaign {campaign_id} after {retries} attempts, skipping.")
-    return []
+        items = data.get("items", [])
+        all_items.extend(items)
+
+        if page > 1:
+            print(f"  [pagination] page {page}: +{len(items)} replies (running total: {len(all_items)})")
+
+        next_cursor = data.get("next_starting_after")
+        if not next_cursor or len(items) < 100:
+            break  # No more pages
+
+        starting_after = next_cursor
+        time.sleep(1.0)  # Rate-limit protection between pages
+
+    return all_items
+
+
+def load_existing_leads(path="leads_report.csv"):
+    """Load existing leads_report.csv into a dict keyed by (email, campaign_name).
+    Used to build a cumulative dataset that never loses historical records."""
+    existing = {}
+    try:
+        with open(path, newline='', encoding='utf-8') as f:
+            for row in csv.DictReader(f):
+                email = row.get('email', '').strip()
+                camp  = row.get('campaign_name', '').strip()
+                if email:
+                    existing[(email, camp)] = row
+        if existing:
+            print(f"[cumulative] Loaded {len(existing):,} existing leads from {path}")
+    except FileNotFoundError:
+        print(f"[cumulative] No existing {path} — starting fresh.")
+    return existing
 
 
 def classify_reply(text: str, subject: str = "") -> Tuple[str, str, bool]:
@@ -490,6 +531,9 @@ def print_campaign_report(summary):
 
 
 def main():
+    # Load historical leads before fetching so we can merge cumulatively
+    existing_leads = load_existing_leads()
+
     campaigns = get_campaigns()
     all_summaries = []
 
@@ -504,6 +548,25 @@ def main():
             print_campaign_report(summary)
         except Exception as e:
             print(f"  [error] skipping campaign '{cname}': {e}")
+
+    # ── Build flat list of all new lead rows ──────────────────────────────────
+    leads_fields = [
+        "email", "campaign_name", "classification", "reason", "decline_category",
+        "reply_text", "clean_reply_summary", "hot_lead", "timestamp", "is_fallback",
+        "creator_handle",
+    ]
+    all_lead_rows = [row for s in all_summaries for row in s["_lead_rows"]]
+
+    # ── Merge: preserve historical leads not seen in this fetch ──────────────
+    seen_keys = {(r["email"], r["campaign_name"]) for r in all_lead_rows}
+    preserved = 0
+    for key, old_row in existing_leads.items():
+        if key not in seen_keys:
+            all_lead_rows.append({f: old_row.get(f, "") for f in leads_fields})
+            preserved += 1
+    if preserved:
+        print(f"[cumulative] Preserved {preserved:,} historical leads not seen in this fetch.")
+    print(f"[cumulative] Total leads after merge: {len(all_lead_rows):,} ({len(all_lead_rows) - preserved:,} fresh + {preserved:,} historical)")
 
     # ── 1. campaign_report.csv ──────────────────────────────────────────────────
     campaign_report_fields = [
@@ -530,29 +593,22 @@ def main():
             })
     print("\nSaved: campaign_report.csv")
 
-    # ── 2. leads_report.csv ─────────────────────────────────────────────────────
-    leads_fields = [
-        "email", "campaign_name", "classification", "reason", "decline_category",
-        "reply_text", "clean_reply_summary", "hot_lead", "timestamp", "is_fallback",
-        "creator_handle",
-    ]
+    # ── 2. leads_report.csv (cumulative) ────────────────────────────────────────
     with open("leads_report.csv", "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=leads_fields)
         w.writeheader()
-        for s in all_summaries:
-            for row in s["_lead_rows"]:
-                w.writerow({k: row[k] for k in leads_fields})
-    print("Saved: leads_report.csv")
+        for row in all_lead_rows:
+            w.writerow({k: row.get(k, "") for k in leads_fields})
+    print(f"Saved: leads_report.csv ({len(all_lead_rows):,} total leads)")
 
     # ── 3. no_reasons_report.csv ────────────────────────────────────────────────
     no_fields = ["email", "campaign_name", "classification", "decline_category", "reason", "clean_reply_summary", "timestamp", "creator_handle"]
     with open("no_reasons_report.csv", "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=no_fields)
         w.writeheader()
-        for s in all_summaries:
-            for row in s["_lead_rows"]:
-                if row["classification"] in ("NO", "NOT_INTERESTED"):
-                    w.writerow({k: row[k] for k in no_fields})
+        for row in all_lead_rows:
+            if row.get("classification") in ("NO", "NOT_INTERESTED"):
+                w.writerow({k: row.get(k, "") for k in no_fields})
     print("Saved: no_reasons_report.csv")
 
     # ── 4. hot_leads_report.csv ─────────────────────────────────────────────────
@@ -560,10 +616,9 @@ def main():
     with open("hot_leads_report.csv", "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=hot_fields)
         w.writeheader()
-        for s in all_summaries:
-            for row in s["_lead_rows"]:
-                if row["classification"] in ("YES", "INTERESTED"):
-                    w.writerow({k: row[k] for k in hot_fields})
+        for row in all_lead_rows:
+            if row.get("classification") in ("YES", "INTERESTED"):
+                w.writerow({k: row.get(k, "") for k in hot_fields})
     print("Saved: hot_leads_report.csv")
 
     # ── 5. zero_reply_campaigns.csv ─────────────────────────────────────────────
@@ -609,17 +664,18 @@ def main():
     with open("instantly_leads_by_email.csv", "w", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=legacy_fields)
         w.writeheader()
-        for s in all_summaries:
-            for row in s["_lead_rows"]:
-                w.writerow({k: row[k] for k in legacy_fields})
+        for row in all_lead_rows:
+            w.writerow({k: row.get(k, "") for k in legacy_fields})
     print("Saved: instantly_leads_by_email.csv")
 
     # ── Summary ─────────────────────────────────────────────────────────────────
-    total_inbound = sum(s["TOTAL_INBOUND"] for s in all_summaries)
-    total_hot     = sum(s["POSITIVE_TOTAL"] for s in all_summaries)
-    zero_camps    = sum(1 for s in all_summaries if s["TOTAL_INBOUND"] == 0)
+    total_inbound   = sum(s["TOTAL_INBOUND"] for s in all_summaries)
+    total_hot       = sum(s["POSITIVE_TOTAL"] for s in all_summaries)
+    zero_camps      = sum(1 for s in all_summaries if s["TOTAL_INBOUND"] == 0)
+    total_cumulative = len(all_lead_rows)
     print(f"\n{'='*60}")
-    print(f"TOTAL: {len(all_summaries)} campaigns | {total_inbound} inbound | {total_hot} hot leads | {zero_camps} zero-reply campaigns")
+    print(f"FETCH:      {len(all_summaries)} campaigns | {total_inbound:,} inbound this run | {total_hot} hot leads | {zero_camps} zero-reply")
+    print(f"CUMULATIVE: {total_cumulative:,} total leads in dataset ({preserved:,} preserved from previous runs)")
     print(f"{'='*60}")
 
 

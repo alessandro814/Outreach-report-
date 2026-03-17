@@ -115,9 +115,11 @@ if os.path.exists(leads_file):
 
 now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 data = {
-    'last_updated': now,
-    'campaigns':    campaigns,
-    'leads':        leads,
+    'last_updated':    now,
+    'total_leads':     len(leads),
+    'total_campaigns': len(campaigns),
+    'campaigns':       campaigns,
+    'leads':           leads,
 }
 
 # ── Guard: never overwrite production data with an empty dataset ─────────────

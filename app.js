@@ -645,11 +645,70 @@ function setupEmailLookup() {
   document.getElementById('lookupInput').addEventListener('keydown', e => { if (e.key==='Enter') doLookup(); });
 }
 
+function _emailLookupScore(l, q) {
+  // Score a lead against a query across all relevant fields
+  const emailNorm   = l.email.toLowerCase().trim();
+  const emailLocal  = emailNorm.split('@')[0];
+  const handleNorm  = (l.creator_handle || '').toLowerCase().replace(/^@+/, '').trim();
+  const replyNorm   = (l.reply_text || '').toLowerCase();
+  const summaryNorm = (l.clean_reply_summary || '').toLowerCase();
+  // _fuzzyScore and _normalizeHandle are defined in the Handle Lookup section (hoisted)
+  return Math.max(
+    _fuzzyScore(emailNorm, q),
+    _fuzzyScore(emailLocal, q),
+    _fuzzyScore(handleNorm, q),
+    replyNorm.includes(q) ? 0.3 : 0,
+    summaryNorm.includes(q) ? 0.2 : 0
+  );
+}
+
 function doLookup() {
-  const q   = document.getElementById('lookupInput').value.trim().toLowerCase();
+  const raw = document.getElementById('lookupInput').value.trim();
+  const q   = raw.toLowerCase().trim();
   const out = document.getElementById('lookup-results');
-  if (!q) { out.innerHTML=''; return; }
-  renderHits(D.leads.filter(l => l.email.toLowerCase().includes(q)), out, q);
+  if (!q) { out.innerHTML = ''; return; }
+
+  // Always search full D.leads — NEVER the date-filtered or tag-filtered subset
+  const allLeads = D.leads;
+
+  const scored = allLeads
+    .map(l => ({ l, score: _emailLookupScore(l, q) }))
+    .filter(x => x.score > 0)
+    .sort((a, b) => b.score - a.score);
+
+  const hits    = scored.filter(x => x.score >= 0.5).map(x => x.l);
+  const similar = scored.filter(x => x.score > 0 && x.score < 0.5).map(x => x.l).slice(0, 5);
+
+  const lastUpd = D.last_updated ? ` &middot; Updated: <b>${esc(D.last_updated)}</b>` : '';
+  const debugHtml = `
+    <div class="handle-debug">
+      Dataset: <b>${allLeads.length.toLocaleString()}</b> leads (full, unfiltered)${lastUpd}
+      &nbsp;|&nbsp; Searched: email · email-local · creator_handle · reply text
+      &nbsp;|&nbsp; Query: <code>${esc(q)}</code>
+      &nbsp;|&nbsp; Hits: <b>${hits.length}</b> &middot; Similar: <b>${similar.length}</b>
+    </div>`;
+
+  if (!hits.length && !similar.length) {
+    out.innerHTML = debugHtml + `<div class="lookup-empty">
+      No result for <strong>${esc(raw)}</strong> in the production dataset (${allLeads.length.toLocaleString()} leads).<br>
+      <small style="color:#d97706;display:block;margin-top:6px">
+        If this creator should exist, the dataset may be incomplete — old fetches only retrieved the first 100 replies per campaign.
+        Re-run <code>run_all.sh</code> to fetch full historical data from Instantly.
+      </small>
+    </div>`;
+    return;
+  }
+
+  let html = debugHtml;
+  if (hits.length) {
+    html += `<div class="handle-section-label">${hits.length} result${hits.length > 1 ? 's' : ''} for <strong>${esc(raw)}</strong></div>`;
+    html += hits.map(_renderHitCard).join('');
+  }
+  if (similar.length) {
+    html += `<div class="handle-section-label" style="margin-top:12px;color:#6b7280">Similar matches</div>`;
+    html += similar.map(_renderHitCard).join('');
+  }
+  out.innerHTML = html;
 }
 
 /* ── Quick lookup (overview card) ─────────────────── */
@@ -661,53 +720,27 @@ function setupQuickLookup() {
 
   function run() {
     const q = input.value.trim().toLowerCase();
-    if (!q) { out.innerHTML=''; clear.style.display='none'; return; }
-    clear.style.display='';
-    renderHits(D.leads.filter(l => l.email.toLowerCase().includes(q)), out, q);
+    if (!q) { out.innerHTML = ''; clear.style.display = 'none'; return; }
+    clear.style.display = '';
+    // Quick lookup also searches full D.leads across all fields
+    const hits = D.leads.filter(l => _emailLookupScore(l, q) >= 0.5);
+    renderHits(hits, out, q);
   }
 
   btn.addEventListener('click', run);
-  input.addEventListener('keydown', e => { if (e.key==='Enter') run(); });
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') run(); });
   clear.addEventListener('click', () => {
-    input.value=''; out.innerHTML=''; clear.style.display='none';
+    input.value = ''; out.innerHTML = ''; clear.style.display = 'none';
   });
 }
 
-/* ── Shared hit renderer ──────────────────────────── */
+/* ── Shared hit renderer (used by quick lookup and renderHits callers) ── */
 function renderHits(hits, container, q) {
   if (!hits.length) {
-    container.innerHTML = `<div class="lookup-empty">No email matching <strong>${esc(q)}</strong> found in any campaign.</div>`;
+    container.innerHTML = `<div class="lookup-empty">No result matching <strong>${esc(q)}</strong> found.</div>`;
     return;
   }
-  container.innerHTML = hits.map(l => {
-    const hotLine = l.hot_lead
-      ? `<span class="hot-tag" style="margin-left:6px">🔥 Hot Lead</span>` : '';
-    const declineLine = l.decline_category
-      ? `<div class="hit-reason" style="color:#ef4444">Decline reason: <strong>${esc(l.decline_category)}</strong></div>` : '';
-    const summary = l.clean_reply_summary || l.reply_text || '';
-    const tsLine = l.timestamp
-      ? `<span style="color:#9ca3af;font-size:11px;margin-left:8px">${esc(l.timestamp.slice(0,10))}</span>` : '';
-    const handleLine = l.creator_handle
-      ? `<span class="handle-tag" style="margin-right:6px">@${esc(l.creator_handle)}</span>` : '';
-    const tagBadge = tagBadgeHtml(l.email);
-    return `
-      <div class="lookup-hit hit-${l.classification}">
-        <div class="hit-top">
-          ${handleLine}<span class="hit-email">${esc(l.email)}</span>
-          <span class="badge badge-${l.classification}">${l.classification.replace(/_/g,' ')}</span>
-          ${hotLine}
-          ${tagBadge ? `<span style="margin-left:6px">${tagBadge}</span>` : ''}
-          ${tsLine}
-        </div>
-        <div class="hit-meta">
-          <span>Campaign: <strong>${esc(l.campaign_name)}</strong></span>
-        </div>
-        ${l.reason ? `<div class="hit-reason">${esc(l.reason)}</div>` : ''}
-        ${declineLine}
-        ${summary ? `<div class="hit-text">${esc(summary)}</div>` : ''}
-      </div>
-    `;
-  }).join('');
+  container.innerHTML = hits.map(_renderHitCard).join('');
 }
 
 /* ── utils ────────────────────────────────────────── */
@@ -2011,45 +2044,132 @@ function setupHandleLookup() {
   input.addEventListener('keydown', e => { if (e.key === 'Enter') doHandleLookup(); });
 }
 
-function doHandleLookup() {
-  const q   = document.getElementById('handleLookupInput').value.trim().toLowerCase();
+function _normalizeHandle(s) {
+  return (s || '').toLowerCase().replace(/^@+/, '').trim();
+}
+
+function _fuzzyScore(haystack, needle) {
+  // Returns 0–1: 1=exact, 0.8=starts-with, 0.5=contains, 0=no match
+  if (!haystack || !needle) return 0;
+  const h = haystack.toLowerCase(), n = needle.toLowerCase();
+  if (h === n) return 1;
+  if (h.startsWith(n)) return 0.8;
+  if (h.includes(n)) return 0.5;
+  return 0;
+}
+
+function _renderHitCard(l) {
+  const hotLine     = l.hot_lead ? `<span class="hot-tag" style="margin-left:6px">Hot Lead</span>` : '';
+  const tsLine      = l.timestamp ? `<span style="color:#9ca3af;font-size:11px;margin-left:8px">${esc(l.timestamp.slice(0,10))}</span>` : '';
+  const handleDisp  = l.creator_handle ? `<span class="handle-tag" style="margin-right:6px">@${esc(l.creator_handle)}</span>` : '';
+  const declineLine = l.decline_category
+    ? `<div class="hit-reason" style="color:#ef4444">Decline reason: <strong>${esc(l.decline_category)}</strong></div>` : '';
+  const summary  = l.clean_reply_summary || l.reply_text || '';
+  const tagBadge = tagBadgeHtml(l.email);
+  return `
+    <div class="lookup-hit hit-${l.classification}">
+      <div class="hit-top">
+        ${handleDisp}<span class="hit-email">${esc(l.email)}</span>
+        <span class="badge badge-${l.classification}">${l.classification.replace(/_/g,' ')}</span>
+        ${hotLine}
+        ${tagBadge ? `<span style="margin-left:6px">${tagBadge}</span>` : ''}
+        ${tsLine}
+      </div>
+      <div class="hit-meta"><span>Campaign: <strong>${esc(l.campaign_name)}</strong></span></div>
+      ${l.reason ? `<div class="hit-reason">${esc(l.reason)}</div>` : ''}
+      ${declineLine}
+      ${summary ? `<div class="hit-text">${esc(summary)}</div>` : ''}
+    </div>
+  `;
+}
+
+async function doHandleLookup() {
+  const raw = document.getElementById('handleLookupInput').value.trim();
+  const q   = _normalizeHandle(raw);
   const out = document.getElementById('handle-lookup-results');
   if (!q) { out.innerHTML = ''; return; }
-  const hits = D.leads.filter(l =>
-    (l.creator_handle && l.creator_handle.toLowerCase().includes(q)) ||
-    l.email.toLowerCase().includes(q)
-  );
-  if (!hits.length) {
-    out.innerHTML = `<div class="lookup-empty">No creator matching <strong>${esc(q)}</strong> found in any campaign.</div>`;
+
+  // Always search full D.leads — never date/tag filtered
+  const allLeads      = D.leads;
+  const totalCreators = new Set(allLeads.map(l => _normalizeHandle(l.creator_handle)).filter(Boolean)).size;
+  const totalEmails   = new Set(allLeads.map(l => l.email.toLowerCase())).size;
+  const emailUser     = q.includes('@') ? q.split('@')[0] : q;
+
+  // Score every lead across handle, email username, email full, and reply text
+  const scored = allLeads.map(l => {
+    const handleNorm = _normalizeHandle(l.creator_handle);
+    const emailNorm  = l.email.toLowerCase();
+    const emailLocal = emailNorm.split('@')[0];
+    const replyNorm  = (l.reply_text || '').toLowerCase();
+    const score = Math.max(
+      _fuzzyScore(handleNorm, q),
+      _fuzzyScore(emailLocal, emailUser),
+      _fuzzyScore(emailNorm, q),
+      replyNorm.includes(q) ? 0.3 : 0
+    );
+    return { l, score };
+  }).filter(x => x.score > 0).sort((a, b) => b.score - a.score);
+
+  const hits    = scored.filter(x => x.score >= 0.5).map(x => x.l);
+  const similar = scored.filter(x => x.score > 0 && x.score < 0.5).map(x => x.l).slice(0, 5);
+  const exactMatch = allLeads.some(l => _normalizeHandle(l.creator_handle) === q || l.email.toLowerCase() === q);
+
+  const _lastUpd2 = D.last_updated ? ` &middot; Updated: <b>${esc(D.last_updated)}</b>` : '';
+  const debugHtml = `
+    <div class="handle-debug">
+      Dataset: <b>${allLeads.length.toLocaleString()}</b> leads &middot;
+      <b>${totalCreators.toLocaleString()}</b> creators &middot;
+      <b>${totalEmails.toLocaleString()}</b> emails${_lastUpd2}
+      &nbsp;|&nbsp; Query: <code>${esc(q)}</code>
+      &nbsp;|&nbsp; Exact: <b>${exactMatch ? 'yes' : 'no'}</b>
+      &nbsp;|&nbsp; Hits: <b>${hits.length}</b> &middot; Similar: <b>${similar.length}</b>
+    </div>`;
+
+  if (!hits.length && !similar.length) {
+    out.innerHTML = debugHtml + `<div class="lookup-empty">
+      No creator matching <strong>${esc(raw)}</strong> in the production dataset (${allLeads.length.toLocaleString()} leads).<br>
+      <small style="color:#d97706;display:block;margin-top:6px">
+        Dataset may be incomplete — old fetches only retrieved the first 100 replies per campaign.
+        Re-run <code>run_all.sh</code> to fetch full historical data.
+      </small>
+    </div>`;
+    _tryLiveHandleLookup(q, raw, out);
     return;
   }
-  out.innerHTML = hits.map(l => {
-    const hotLine    = l.hot_lead ? `<span class="hot-tag" style="margin-left:6px">🔥 Hot Lead</span>` : '';
-    const tsLine     = l.timestamp ? `<span style="color:#9ca3af;font-size:11px;margin-left:8px">${esc(l.timestamp.slice(0,10))}</span>` : '';
-    const handleDisp = l.creator_handle ? `<span class="handle-tag" style="margin-right:6px">@${esc(l.creator_handle)}</span>` : '';
-    const declineLine = l.decline_category
-      ? `<div class="hit-reason" style="color:#ef4444">Decline reason: <strong>${esc(l.decline_category)}</strong></div>` : '';
-    const summary = l.clean_reply_summary || l.reply_text || '';
-    const tagBadge = tagBadgeHtml(l.email);
-    return `
-      <div class="lookup-hit hit-${l.classification}">
-        <div class="hit-top">
-          ${handleDisp}<span class="hit-email">${esc(l.email)}</span>
-          <span class="badge badge-${l.classification}">${l.classification.replace(/_/g,' ')}</span>
-          ${hotLine}
-          ${tagBadge ? `<span style="margin-left:6px">${tagBadge}</span>` : ''}
-          ${tsLine}
-        </div>
-        <div class="hit-meta">
-          <span>Campaign: <strong>${esc(l.campaign_name)}</strong></span>
-        </div>
-        ${l.reason ? `<div class="hit-reason">${esc(l.reason)}</div>` : ''}
-        ${declineLine}
-        ${summary ? `<div class="hit-text">${esc(summary)}</div>` : ''}
-        ${l.reply_text && l.reply_text !== summary ? `<div class="hit-text" style="color:#6b7280;font-size:12px;margin-top:4px">${esc(l.reply_text.slice(0,400))}</div>` : ''}
-      </div>
-    `;
-  }).join('');
+
+  let html = debugHtml;
+  if (hits.length) {
+    html += `<div class="handle-section-label">${hits.length} result${hits.length > 1 ? 's' : ''} for <strong>${esc(raw)}</strong></div>`;
+    html += hits.map(_renderHitCard).join('');
+  }
+  if (similar.length) {
+    html += `<div class="handle-section-label" style="margin-top:12px;color:#6b7280">Similar matches</div>`;
+    html += similar.map(_renderHitCard).join('');
+  }
+  out.innerHTML = html;
+}
+
+async function _tryLiveHandleLookup(q, raw, out) {
+  const notice = document.createElement('div');
+  notice.className = 'lookup-empty';
+  notice.style.fontStyle = 'italic';
+  notice.innerHTML = `Checking Instantly API live for <strong>${esc(raw)}</strong>...`;
+  out.appendChild(notice);
+  try {
+    const res = await fetch(`${AI_BASE_URL}/api/lookup-handle?q=${encodeURIComponent(q)}`);
+    notice.remove();
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!data.results || !data.results.length) {
+      out.insertAdjacentHTML('beforeend', `<div class="lookup-empty">Not found in Instantly API either.</div>`);
+      return;
+    }
+    let html = `<div class="handle-section-label" style="color:#7c3aed">Live from Instantly API (${data.results.length} result${data.results.length > 1 ? 's' : ''})</div>`;
+    html += data.results.map(_renderHitCard).join('');
+    out.insertAdjacentHTML('beforeend', html);
+  } catch {
+    notice.remove();
+  }
 }
 
 /* ═══════════════════════════════════════════════════

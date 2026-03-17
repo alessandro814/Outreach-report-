@@ -597,6 +597,58 @@ def delete_tag():
         return jsonify({"error": str(e), "code": "request_failed"}), 502
 
 
+# ── GET /api/lookup-handle ────────────────────────────────────────────────────
+
+@app.route('/api/lookup-handle', methods=['GET'])
+def lookup_handle():
+    """Search Instantly API live for a creator handle or email fragment."""
+    instantly_key = os.getenv('INSTANTLY_API_KEY', '')
+    if not instantly_key:
+        return jsonify({"error": "INSTANTLY_API_KEY not configured", "code": "no_key"}), 503
+
+    q = request.args.get('q', '').strip().lower().lstrip('@')
+    if not q or len(q) < 2:
+        return jsonify({"error": "q param required (min 2 chars)"}), 400
+
+    base = "https://api.instantly.ai/api/v2"
+    hdrs = {"Authorization": f"Bearer {instantly_key}", "Content-Type": "application/json"}
+
+    results = []
+    seen_emails = set()
+    try:
+        url = f"{base}/emails?is_inbound=true&limit=100"
+        r = _requests.get(url, headers=hdrs, timeout=15)
+        if not r.ok:
+            return jsonify({"error": f"Instantly API error: {r.status_code}"}), 502
+        items = r.json().get("items", [])
+        for item in items:
+            email = (item.get("lead") or "").lower()
+            body_text = (item.get("body") or {}).get("text") or ""
+            email_local = email.split("@")[0] if "@" in email else email
+            if q in email or q in email_local or q in body_text.lower():
+                if email not in seen_emails:
+                    seen_emails.add(email)
+                    results.append({
+                        "email":              email,
+                        "campaign_name":      item.get("campaign_id", ""),
+                        "classification":     "YES",
+                        "creator_handle":     email_local,
+                        "reply_text":         body_text[:500],
+                        "clean_reply_summary": body_text[:200],
+                        "hot_lead":           True,
+                        "timestamp":          item.get("timestamp_email") or item.get("created_at") or "",
+                        "reason":             "",
+                        "decline_category":   "",
+                        "is_fallback":        False,
+                    })
+                    if len(results) >= 20:
+                        break
+    except Exception as e:
+        return jsonify({"error": str(e), "code": "request_failed"}), 502
+
+    return jsonify({"results": results, "source": "instantly_live"})
+
+
 # ── Main ────────────────────────────────────────────────────────────────────────
 
 if __name__ == '__main__':

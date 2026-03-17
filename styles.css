@@ -411,6 +411,31 @@ tbody td { padding: 9px 11px; vertical-align: middle; color: #374151; }
   border: 1.5px dashed #e5e7eb;
 }
 
+/* ── Handle Lookup debug + section labels ─────────────── */
+.handle-debug {
+  background: #f0f4ff;
+  border: 1px solid #c7d2fe;
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 11.5px;
+  color: #4338ca;
+  margin-bottom: 10px;
+  line-height: 1.6;
+}
+.handle-debug code {
+  background: #e0e7ff;
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 11px;
+}
+.handle-section-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #374151;
+  margin-bottom: 6px;
+  padding-left: 2px;
+}
+
 /* ── Dedicated Email Lookup Page ──────────────────────── */
 .lookup-wrap { max-width: 680px; margin: 0 auto; text-align: center; padding: 32px 20px 20px; }
 .lookup-wrap h2 { font-size: 22px; font-weight: 700; margin-bottom: 6px; }
