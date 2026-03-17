@@ -773,6 +773,86 @@ tbody td { padding: 9px 11px; vertical-align: middle; color: #374151; }
 .ai-rec-reason { font-size: 12px; color: #374151; margin-bottom: 4px; line-height: 1.5; }
 .ai-rec-action { font-size: 12px; color: #6366f1; font-weight: 600; }
 
+/* AI Status Bar */
+.ai-status-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  font-size: 12px;
+  font-weight: 500;
+  border-bottom: 1px solid #e5e7eb;
+  background: #f9fafb;
+  flex-shrink: 0;
+}
+.ai-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.ai-status-detail { color: #9ca3af; font-weight: 400; margin-left: 4px; }
+.ai-status-checking .ai-status-dot { background: #d1d5db; animation: pulse 1.5s infinite; }
+.ai-status-checking .ai-status-text { color: #6b7280; }
+.ai-status-online   .ai-status-dot  { background: #10b981; }
+.ai-status-online   .ai-status-text { color: #065f46; }
+.ai-status-online { background: #f0fdf4; border-color: #bbf7d0; }
+.ai-status-offline  .ai-status-dot  { background: #ef4444; }
+.ai-status-offline  .ai-status-text { color: #7f1d1d; }
+.ai-status-offline { background: #fef2f2; border-color: #fecaca; }
+.ai-status-nokey    .ai-status-dot  { background: #f59e0b; }
+.ai-status-nokey    .ai-status-text { color: #78350f; }
+.ai-status-nokey { background: #fffbeb; border-color: #fde68a; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+/* AI Recommend-Reply extras */
+.ai-rec-reply-row { font-size: 12px; color: #374151; margin-bottom: 7px; line-height: 1.6; }
+.ai-rec-reply-label { font-size: 11px; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: .05em; margin-bottom: 5px; }
+.ai-rec-conf { font-size: 11px; color: #6b7280; font-weight: 400; }
+
+/* Data Warning Banner */
+.data-warning-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 18px;
+  background: #fffbeb;
+  border-bottom: 1px solid #fde68a;
+  font-size: 12px;
+  color: #78350f;
+  font-weight: 500;
+  flex-wrap: wrap;
+  position: sticky;
+  top: 100px; /* below nav + date filter bar */
+  z-index: 90;
+}
+.data-warning-icon { font-size: 14px; flex-shrink: 0; }
+.data-warning-age  { color: #92400e; font-size: 11px; }
+.data-warning-dismiss {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: #92400e;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 4px;
+  line-height: 1;
+}
+.data-warning-dismiss:hover { color: #451a03; }
+
+/* Data Source Badge */
+.data-source-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+  margin-right: 8px;
+}
+.ds-live    { color: #065f46; background: #d1fae5; }
+.ds-cached  { color: #92400e; background: #fef3c7; }
+.ds-bundled { color: #374151; background: #f3f4f6; }
+.ds-error   { color: #7f1d1d; background: #fee2e2; }
+
 /* AI Chat Page */
 .ai-chat-page {
   display: flex;
@@ -1048,6 +1128,168 @@ tbody td { padding: 9px 11px; vertical-align: middle; color: #374151; }
   border-radius: 20px;
   padding: 2px 10px;
   white-space: nowrap;
+}
+
+/* ── Debug Panel ────────────────────────────────── */
+.debug-panel {
+  background: #1e1f2e;
+  border-bottom: 1px solid #374151;
+  padding: 4px 20px;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  flex-direction: column;
+}
+.debug-toggle-btn {
+  font-size: 11px;
+  padding: 3px 10px;
+  border: 1px solid #4b5563;
+  border-radius: 4px;
+  background: transparent;
+  color: #9ca3af;
+  cursor: pointer;
+  font-family: monospace;
+}
+.debug-toggle-btn:hover { color: #f9fafb; border-color: #9ca3af; }
+.debug-panel-body {
+  width: 100%;
+  padding-bottom: 6px;
+}
+.debug-table {
+  font-family: monospace;
+  font-size: 11px;
+  color: #d1d5db;
+  border-collapse: collapse;
+}
+.debug-table td {
+  padding: 2px 16px 2px 0;
+}
+.debug-table td:first-child {
+  color: #9ca3af;
+  min-width: 220px;
+}
+.debug-table strong { color: #a5f3fc; }
+
+/* ── Tag Filter Bar ─────────────────────────────── */
+.tag-filter-bar {
+  background: #f9fafb;
+  border-bottom: 1px solid #e5e7eb;
+  padding: 6px 20px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.tag-filter-label {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #6b7280;
+  white-space: nowrap;
+}
+.tag-filter-btns {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.tag-filter-btn {
+  padding: 3px 9px;
+  border: 1.5px solid #e5e7eb;
+  border-radius: 20px;
+  background: #fff;
+  color: #374151;
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.12s;
+  white-space: nowrap;
+}
+.tag-filter-btn:hover { border-color: #6b7280; }
+.tag-filter-btn.active { background: #1e1f2e; color: #fff; border-color: #1e1f2e; font-weight: 600; }
+.tag-btn-free-affiliate.active { background: #2563eb; border-color: #2563eb; }
+.tag-btn-closed.active         { background: #059669; border-color: #059669; }
+.tag-btn-said-no.active        { background: #dc2626; border-color: #dc2626; }
+.tag-btn-lost.active           { background: #6b7280; border-color: #6b7280; }
+.tag-btn-waiting.active        { background: #d97706; border-color: #d97706; }
+.tag-filter-badge {
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid;
+  border-radius: 20px;
+  padding: 2px 10px;
+  white-space: nowrap;
+}
+
+/* ── Tag Badges ──────────────────────────────────── */
+.lead-tag-badge {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 20px;
+  border: 1px solid;
+  white-space: nowrap;
+  letter-spacing: 0.02em;
+}
+.tag-free-affiliate { background: #dbeafe; color: #2563eb; border-color: #2563eb; }
+.tag-closed         { background: #d1fae5; color: #059669; border-color: #059669; }
+.tag-said-no        { background: #fee2e2; color: #dc2626; border-color: #dc2626; }
+.tag-lost           { background: #f3f4f6; color: #6b7280; border-color: #6b7280; }
+.tag-waiting-rates  { background: #fef3c7; color: #d97706; border-color: #d97706; }
+
+/* ── Tag Select ──────────────────────────────────── */
+.tag-select {
+  font-size: 11px;
+  padding: 3px 6px;
+  border: 1.5px solid #e5e7eb;
+  border-radius: 6px;
+  background: #f9fafb;
+  color: #374151;
+  cursor: pointer;
+  min-width: 110px;
+  max-width: 140px;
+  transition: all 0.12s;
+}
+.tag-select:focus { outline: none; border-color: #6366f1; }
+
+/* ── Tag Notes Input ─────────────────────────────── */
+.tag-notes-input {
+  font-size: 11px;
+  padding: 4px 8px;
+  border: 1.5px solid #e5e7eb;
+  border-radius: 6px;
+  background: #fff;
+  color: #374151;
+  width: 100%;
+  min-width: 160px;
+}
+.tag-notes-input:focus {
+  outline: none;
+  border-color: #6366f1;
+}
+
+/* ── Tags Unavailable Banner ─────────────────────── */
+.tags-unavailable-banner {
+  background: #fef3c7;
+  border: 1px solid #fbbf24;
+  border-radius: 8px;
+  padding: 10px 16px;
+  margin: 12px 20px 0;
+  font-size: 12px;
+  color: #92400e;
+  font-weight: 500;
+}
+
+/* ── Tag Status Filter Select ────────────────────── */
+.tag-status-filter-select {
+  font-size: 12px;
+  padding: 5px 10px;
+  border: 1.5px solid #e5e7eb;
+  border-radius: 6px;
+  background: #f9fafb;
+  color: #374151;
+  cursor: pointer;
 }
 
 /* ── Today's Activity Section ───────────────────── */

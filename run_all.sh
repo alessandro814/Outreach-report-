@@ -36,6 +36,7 @@ python3 prepare_dashboard.py
 echo ""
 echo "============================================================"
 echo "  Done — $(date '+%Y-%m-%d %H:%M:%S')"
+echo "  Steps: fetch → classify → detect changes → prepare → upload to Sheets → git push"
 echo "  CSVs generated:"
 echo "    campaign_report.csv          (one row per campaign, 11 metrics)"
 echo "    leads_report.csv             (one row per lead, full detail)"
@@ -45,8 +46,14 @@ echo "    zero_reply_campaigns.csv     (campaigns with 0 inbound)"
 echo "============================================================"
 echo ""
 
-# ── Step 4: Push updated data to GitHub → triggers Vercel auto-deploy ──────────
-echo "[4/4] Pushing data.js + data.json to GitHub (Vercel auto-deploy)..."
+# ── Step 4: Upload to Google Sheets (remote data source for Vercel) ────────────
+echo ""
+echo "[4/5] Uploading data to Google Sheets (remote data source)..."
+python3 upload_to_gsheets.py || echo "  WARNING: Google Sheets upload failed — continuing."
+
+# ── Step 5: Push updated data to GitHub → triggers Vercel auto-deploy ──────────
+echo ""
+echo "[5/5] Pushing data.js + data.json to GitHub (Vercel backup deploy)..."
 git add data.js data.json
 git diff --cached --quiet && echo "  No data changes — nothing to push." || (
   git commit -m "data: auto-update $(date '+%Y-%m-%d %H:%M')" && \

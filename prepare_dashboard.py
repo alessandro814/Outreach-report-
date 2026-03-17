@@ -11,23 +11,41 @@ def read_csv(path):
 
 
 def parse_timestamp(ts_str):
-    """Parse ISO timestamp and return date, day_of_week, week, month."""
+    """Parse ISO timestamp and return date components for filtering and display."""
     if not ts_str:
-        return {'date': '', 'day_of_week': '', 'week': '', 'month': ''}
+        return {
+            'timestamp_raw': '',
+            'datetime_local': '',
+            'date': '', 'date_yyyy_mm_dd': '',
+            'day_of_week': '', 'day': '',
+            'week': '', 'month': '', 'year': '',
+        }
     try:
         clean = ts_str.strip().replace('Z', '+00:00')
         # Python 3.9's fromisoformat only handles 0 or 6 fractional-second digits.
         # The Instantly API returns 3-digit milliseconds (e.g. .123), so we pad to 6.
         clean = re.sub(r'(\.\d{3})(\+|-|$)', r'\g<1>000\2', clean)
         dt = datetime.fromisoformat(clean)
+        date_str = dt.strftime('%Y-%m-%d')
         return {
-            'date':        dt.strftime('%Y-%m-%d'),
-            'day_of_week': dt.strftime('%A'),
-            'week':        dt.strftime('%Y-W%V'),
-            'month':       dt.strftime('%Y-%m'),
+            'timestamp_raw':   ts_str,
+            'datetime_local':  dt.isoformat(),
+            'date':            date_str,
+            'date_yyyy_mm_dd': date_str,
+            'day_of_week':     dt.strftime('%A'),
+            'day':             dt.day,
+            'week':            dt.strftime('%Y-W%V'),
+            'month':           dt.strftime('%Y-%m'),
+            'year':            dt.year,
         }
     except Exception:
-        return {'date': '', 'day_of_week': '', 'week': '', 'month': ''}
+        return {
+            'timestamp_raw': ts_str,
+            'datetime_local': '',
+            'date': '', 'date_yyyy_mm_dd': '',
+            'day_of_week': '', 'day': '',
+            'week': '', 'month': '', 'year': '',
+        }
 
 
 campaigns = []
@@ -81,10 +99,16 @@ if os.path.exists(leads_file):
             'clean_reply_summary': row.get('clean_reply_summary', ''),
             'hot_lead':            row.get('hot_lead', 'False') in ('True', 'true', '1', True),
             'timestamp':           ts_str,
-            'date':                ts['date'],
-            'day_of_week':         ts['day_of_week'],
-            'week':                ts['week'],
-            'month':               ts['month'],
+            # ── Derived date fields ───────────────────────────────────────────
+            'timestamp_raw':       ts['timestamp_raw'],
+            'datetime_local':      ts['datetime_local'],
+            'date':                ts['date'],           # "YYYY-MM-DD" (used by JS filter)
+            'date_yyyy_mm_dd':     ts['date_yyyy_mm_dd'],
+            'day_of_week':         ts['day_of_week'],    # "Tuesday"
+            'day':                 ts['day'],            # 17 (int)
+            'week':                ts['week'],           # "2026-W12"
+            'month':               ts['month'],          # "2026-03" (used by JS thismonth filter)
+            'year':                ts['year'],           # 2026 (int)
             'is_fallback':         row.get('is_fallback', 'False') in ('True', 'true', '1', True),
             'creator_handle':      row.get('creator_handle', ''),
         })
@@ -95,6 +119,13 @@ data = {
     'campaigns':    campaigns,
     'leads':        leads,
 }
+
+# ── Guard: never overwrite production data with an empty dataset ─────────────
+if not campaigns and not leads:
+    print(f"WARNING: Both campaigns and leads are empty ({now}) — skipping data.js write.")
+    print("         Check Instantly API credentials and re-run instantly_reply_analyzer.py.")
+    import sys
+    sys.exit(0)
 
 with open('data.js', 'w', encoding='utf-8') as f:
     f.write('const DASHBOARD_DATA = ')

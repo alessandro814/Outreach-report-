@@ -7,6 +7,8 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
+<script src="data.js"></script>
+<script src="config.js"></script>
 
 <!-- ── Top Nav ─────────────────────────────────────── -->
 <nav class="topbar">
@@ -20,13 +22,23 @@
     <li><button data-target="page-zero">Zero Reply</button></li>
     <li><button data-target="page-ai" class="nav-ai-btn">✦ AI</button></li>
     <li><button data-target="page-lookup">Email Lookup</button></li>
+    <li><button data-target="page-leadstatus">Lead Status</button></li>
     <li><button data-target="page-handle-lookup">Handle Lookup</button></li>
   </ul>
   <div class="topbar-meta">
+    <span id="data-source-badge" class="data-source-badge" title=""></span>
     <span id="last-updated-display" class="topbar-updated"></span>
     <span id="refresh-countdown" class="topbar-refresh"></span>
   </div>
 </nav>
+
+<!-- ── Data Warning Banner ──────────────────────────── -->
+<div id="data-warning-banner" class="data-warning-banner" style="display:none">
+  <span class="data-warning-icon">⚠</span>
+  <span id="data-warning-text">Data source temporarily unavailable — showing last successful snapshot</span>
+  <span id="data-warning-age"></span>
+  <button class="data-warning-dismiss" onclick="this.parentElement.style.display='none'">✕</button>
+</div>
 
 <!-- ── Date Filter Bar ─────────────────────────────── -->
 <div class="date-filter-bar" id="date-filter-bar">
@@ -45,7 +57,27 @@
     <input type="date" id="date-to" title="To">
     <button class="date-btn-apply" id="date-apply-btn">Apply</button>
   </div>
-  <span id="date-active-badge" class="date-active-badge" style="display:none"></span>
+  <span id="date-active-badge" class="date-active-badge"></span>
+</div>
+
+<!-- ── Debug Panel ─────────────────────────────────── -->
+<div id="debug-panel" class="debug-panel">
+  <button id="debug-toggle-btn" class="debug-toggle-btn" onclick="toggleDebugPanel()">Show Debug</button>
+  <div id="debug-panel-body" class="debug-panel-body" style="display:none"></div>
+</div>
+
+<!-- ── Tag Filter Bar ─────────────────────────────── -->
+<div class="tag-filter-bar" id="tag-filter-bar">
+  <span class="tag-filter-label">Status:</span>
+  <div class="tag-filter-btns">
+    <button class="tag-filter-btn active" data-tag="">All</button>
+    <button class="tag-filter-btn tag-btn-free-affiliate" data-tag="Free Affiliate">Free Affiliate</button>
+    <button class="tag-filter-btn tag-btn-closed" data-tag="Closed">Closed</button>
+    <button class="tag-filter-btn tag-btn-said-no" data-tag="Said NO">Said NO</button>
+    <button class="tag-filter-btn tag-btn-lost" data-tag="LOST">LOST</button>
+    <button class="tag-filter-btn tag-btn-waiting" data-tag="Waiting for rates">Waiting for rates</button>
+  </div>
+  <span id="tag-filter-badge" class="tag-filter-badge" style="display:none"></span>
 </div>
 
 <!-- ══════════════════════════════════════════════════
@@ -290,6 +322,7 @@
             <th data-lcol="classification">Classification</th>
             <th data-lcol="reason">Reason / Decline</th>
             <th data-lcol="clean_reply_summary">Reply Summary</th>
+            <th>Status</th>
             <th style="width:52px;text-align:center">AI</th>
           </tr>
         </thead>
@@ -472,6 +505,11 @@
 <div id="page-ai" class="page">
   <div class="ai-chat-page">
 
+    <div id="ai-status-bar" class="ai-status-bar ai-status-checking">
+      <span class="ai-status-dot"></span>
+      <span class="ai-status-text">Checking AI…</span>
+    </div>
+
     <div class="ai-chat-messages" id="ai-chat-messages">
       <div class="ai-chat-welcome">
         <div class="ai-chat-welcome-icon">✦</div>
@@ -523,6 +561,17 @@
       </div>
     </div>
 
+    <!-- Full Recommendation -->
+    <div class="ai-section">
+      <div class="ai-section-label" style="display:flex;align-items:center;justify-content:space-between">
+        Full Recommendation
+        <button class="btn-ai-outline" id="ai-rec-reply-btn" onclick="runRecommendReply()" style="font-size:11px;padding:3px 10px">Get Recommendation</button>
+      </div>
+      <div id="ai-rec-reply-content" class="ai-analysis-content">
+        <div class="ai-empty">Click "Get Recommendation" for interpretation + suggested reply</div>
+      </div>
+    </div>
+
     <!-- Draft Reply -->
     <div class="ai-section">
       <div class="ai-section-label">Draft Reply</div>
@@ -563,9 +612,82 @@
 </div><!-- /page-handle-lookup -->
 
 
+<!-- ══════════════════════════════════════════════════
+     PAGE: LEAD STATUS (CRM Tags)
+══════════════════════════════════════════════════ -->
+<div id="page-leadstatus" class="page">
+
+  <div id="tags-unavailable-banner" class="tags-unavailable-banner" style="display:none">
+    <span>⚠ Tag storage unavailable — Supabase not configured or unreachable. Tags will not persist.</span>
+  </div>
+
+  <!-- Summary cards -->
+  <div class="kpi-grid" id="tag-kpi-grid">
+    <div class="kpi-card" id="tag-kpi-free-affiliate" style="border-top:3px solid #2563eb">
+      <div class="kpi-label">Free Affiliate</div>
+      <div class="kpi-value" id="tag-count-free-affiliate">—</div>
+    </div>
+    <div class="kpi-card" id="tag-kpi-closed" style="border-top:3px solid #059669">
+      <div class="kpi-label">Closed</div>
+      <div class="kpi-value" id="tag-count-closed">—</div>
+    </div>
+    <div class="kpi-card" id="tag-kpi-said-no" style="border-top:3px solid #dc2626">
+      <div class="kpi-label">Said NO</div>
+      <div class="kpi-value" id="tag-count-said-no">—</div>
+    </div>
+    <div class="kpi-card" id="tag-kpi-lost" style="border-top:3px solid #6b7280">
+      <div class="kpi-label">LOST</div>
+      <div class="kpi-value" id="tag-count-lost">—</div>
+    </div>
+    <div class="kpi-card" id="tag-kpi-waiting" style="border-top:3px solid #d97706">
+      <div class="kpi-label">Waiting for rates</div>
+      <div class="kpi-value" id="tag-count-waiting">—</div>
+    </div>
+  </div>
+
+  <div class="section-card">
+    <div class="section-header">
+      <h3>Tagged Leads <span class="hint" id="tag-status-hint">— loading…</span></h3>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <select id="tag-status-filter" class="tag-status-filter-select">
+          <option value="">All Tags</option>
+          <option value="Free Affiliate">Free Affiliate</option>
+          <option value="Closed">Closed</option>
+          <option value="Said NO">Said NO</option>
+          <option value="LOST">LOST</option>
+          <option value="Waiting for rates">Waiting for rates</option>
+        </select>
+        <button class="btn-download" onclick="downloadTaggedLeadsCSV()">⬇ Download CSV</button>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table id="tagStatusTable">
+        <thead>
+          <tr>
+            <th>Handle</th>
+            <th>Email</th>
+            <th>Campaign</th>
+            <th>Classification</th>
+            <th>Reason</th>
+            <th>Summary</th>
+            <th style="text-align:center">Hot</th>
+            <th>Tag / Status</th>
+            <th style="min-width:200px">Notes</th>
+            <th>Updated</th>
+            <th style="width:52px;text-align:center">AI</th>
+          </tr>
+        </thead>
+        <tbody id="tag-status-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+</div><!-- /page-leadstatus -->
+
+
 <!-- ── Scripts ─────────────────────────────────────── -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<script src="data.js"></script>
 <script src="app.js"></script>
 
 </body>

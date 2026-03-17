@@ -7,11 +7,44 @@ Loads lead/campaign data from data.json (committed to repo, updated by run_all.s
 import os
 import json
 import re
+import time
 import anthropic
+import requests as _requests
+from datetime import datetime, timezone
 from flask import Flask, request, jsonify, Response, stream_with_context
 
 app = Flask(__name__)
-client = anthropic.Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+
+# Safe client initialisation — None if key is absent
+_api_key  = os.getenv("ANTHROPIC_API_KEY")
+client    = anthropic.Anthropic(api_key=_api_key) if _api_key else None
+_supa_url = os.getenv('SUPABASE_URL', '').rstrip('/')
+_supa_key = os.getenv('SUPABASE_SERVICE_KEY', '')
+
+
+@app.after_request
+def _cors(response):
+    response.headers["Access-Control-Allow-Origin"]  = "*"
+    response.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    return response
+
+@app.before_request
+def _options():
+    if request.method == "OPTIONS":
+        resp = app.make_default_options_response()
+        resp.headers["Access-Control-Allow-Origin"]  = "*"
+        resp.headers["Access-Control-Allow-Methods"] = "GET, POST, DELETE, OPTIONS"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        return resp
+
+
+def _supa_headers():
+    return {
+        "apikey":        _supa_key,
+        "Authorization": f"Bearer {_supa_key}",
+        "Content-Type":  "application/json",
+    }
 
 SYSTEM_PROMPT = """You are an expert outreach strategist and copywriter for Black Forest Supplements, \
 a supplement brand doing ~$550K/month on TikTok Shop.
@@ -109,10 +142,90 @@ def extract_json(text):
     return json.loads(m.group(1) if m else text)
 
 
+# ── GET /api/health ─────────────────────────────────────────────────────────────
+
+@app.route('/api/health', methods=['GET'])
+def health():
+    base         = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    csv_loaded   = len(CAMPAIGNS) > 0 or len(LEADS) > 0
+    last_refresh = None
+    try:
+        with open(os.path.join(base, 'data.json'), encoding='utf-8') as f:
+            last_refresh = json.load(f).get('last_updated')
+    except Exception:
+        pass
+    if not last_refresh:
+        try:
+            p = os.path.join(base, 'leads_report.csv')
+            last_refresh = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(os.path.getmtime(p)))
+        except Exception:
+            pass
+    return jsonify({
+        "status":               "ok",
+        "anthropic_configured": bool(_api_key),
+        "csv_loaded":           csv_loaded,
+        "last_data_refresh":    last_refresh,
+    })
+
+
+# ── POST /api/recommend-reply ────────────────────────────────────────────────────
+
+@app.route('/api/recommend-reply', methods=['POST'])
+def recommend_reply():
+    if not client:
+        return jsonify({"error": "ANTHROPIC_API_KEY not configured on backend", "code": "no_api_key"}), 503
+
+    body           = request.get_json(force=True)
+    email          = body.get('email', '')
+    campaign_name  = body.get('campaign_name', '')
+    classification = body.get('classification', '')
+    reply_text     = body.get('reply_text', '')
+    reason         = body.get('reason', '')
+
+    stored = find_lead(email, campaign_name) or {}
+    reply_text     = reply_text     or stored.get('reply_text', '')
+    classification = classification or stored.get('classification', 'unknown')
+    reason         = reason         or stored.get('reason', '')
+
+    prompt = f"""Analyze this creator reply for a TikTok Shop affiliate outreach and return a full recommendation. Return ONLY valid JSON.
+
+EMAIL: {email}
+CAMPAIGN: {campaign_name}
+CLASSIFICATION: {classification}
+REASON: {reason or '(none extracted)'}
+REPLY TEXT: {reply_text or '(no reply text)'}
+
+Return EXACTLY this JSON (no markdown, no prose):
+{{
+  "interpretation": "1-2 sentence summary of what the creator is saying and their intent",
+  "recommended_action": "reply today" | "reply this week" | "low priority" | "do not contact",
+  "suggested_reply": "A concise personalised reply email body under 120 words. Sign as Alessandro Passariello, Black Forest Supplements.",
+  "confidence": 0.95,
+  "hot_lead": true
+}}"""
+
+    try:
+        response = client.messages.create(
+            model="claude-opus-4-6",
+            max_tokens=800,
+            system=SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text   = next((b.text for b in response.content if b.type == "text"), "{}")
+        result = extract_json(text)
+    except Exception as e:
+        return jsonify({"error": str(e), "code": "api_error"}), 500
+
+    return jsonify(result)
+
+
 # ── POST /api/analyze ───────────────────────────────────────────────────────────
 
 @app.route('/api/analyze', methods=['POST'])
 def analyze_lead():
+    if not client:
+        return jsonify({"error": "ANTHROPIC_API_KEY not configured on backend", "code": "no_api_key"}), 503
+
     body          = request.get_json(force=True)
     email         = body.get('email', '')
     campaign_name = body.get('campaign_name', '')
@@ -150,7 +263,7 @@ Return this exact JSON structure (no markdown, no prose):
         response = client.messages.create(
             model="claude-opus-4-6",
             max_tokens=900,
-            thinking={"type": "adaptive"},
+
             system=SYSTEM_PROMPT,
             messages=[{"role": "user", "content": prompt}],
         )
@@ -172,6 +285,9 @@ Return this exact JSON structure (no markdown, no prose):
 
 @app.route('/api/reply', methods=['POST'])
 def draft_reply():
+    if not client:
+        return jsonify({"error": "ANTHROPIC_API_KEY not configured on backend", "code": "no_api_key"}), 503
+
     body          = request.get_json(force=True)
     email         = body.get('email', '')
     campaign_name = body.get('campaign_name', '')
@@ -232,6 +348,9 @@ Sign off as "Alessandro Passariello, Black Forest Supplements". No subject line.
 
 @app.route('/api/chat', methods=['POST'])
 def chat():
+    if not client:
+        return jsonify({"error": "ANTHROPIC_API_KEY not configured on backend", "code": "no_api_key"}), 503
+
     body         = request.get_json(force=True)
     user_message = body.get('message', '')
     history      = body.get('history', [])
@@ -269,6 +388,9 @@ def chat():
 
 @app.route('/api/recommendations', methods=['POST'])
 def get_recommendations():
+    if not client:
+        return jsonify({"error": "ANTHROPIC_API_KEY not configured on backend", "code": "no_api_key"}), 503
+
     hot_leads = [
         l for l in LEADS
         if l.get('classification') in ('YES', 'INTERESTED')
@@ -310,7 +432,7 @@ Return this exact JSON (no markdown):
         response = client.messages.create(
             model="claude-opus-4-6",
             max_tokens=900,
-            thinking={"type": "adaptive"},
+
             system=SYSTEM_PROMPT,
             messages=[{"role": "user", "content": prompt}],
         )
@@ -321,6 +443,70 @@ Return this exact JSON (no markdown):
         recs = []
 
     return jsonify({"recommendations": recs})
+
+
+# ── GET /api/tags ────────────────────────────────────────────────────────────────
+
+@app.route('/api/tags', methods=['GET'])
+def get_tags():
+    if not _supa_url or not _supa_key:
+        return jsonify({"error": "Supabase not configured", "code": "no_supabase"}), 503
+    try:
+        r = _requests.get(
+            f"{_supa_url}/rest/v1/lead_tags?select=*&order=updated_at.desc",
+            headers=_supa_headers(),
+            timeout=10,
+        )
+        if r.ok:
+            return jsonify(r.json())
+        return jsonify({"error": r.text, "code": "supabase_error"}), 502
+    except Exception as e:
+        return jsonify({"error": str(e), "code": "request_failed"}), 502
+
+
+# ── POST /api/tags ────────────────────────────────────────────────────────────────
+
+@app.route('/api/tags', methods=['POST'])
+def upsert_tag():
+    if not _supa_url or not _supa_key:
+        return jsonify({"error": "Supabase not configured", "code": "no_supabase"}), 503
+    body = request.get_json(force=True)
+    body['updated_at'] = datetime.now(timezone.utc).isoformat()
+    hdrs = {**_supa_headers(), "Prefer": "resolution=merge-duplicates,return=representation"}
+    try:
+        r = _requests.post(
+            f"{_supa_url}/rest/v1/lead_tags?on_conflict=email",
+            headers=hdrs,
+            json=body,
+            timeout=10,
+        )
+        if r.ok:
+            return jsonify(r.json())
+        return jsonify({"error": r.text, "code": "supabase_error"}), 502
+    except Exception as e:
+        return jsonify({"error": str(e), "code": "request_failed"}), 502
+
+
+# ── DELETE /api/tags ──────────────────────────────────────────────────────────────
+
+@app.route('/api/tags', methods=['DELETE'])
+def delete_tag():
+    if not _supa_url or not _supa_key:
+        return jsonify({"error": "Supabase not configured", "code": "no_supabase"}), 503
+    email = request.args.get('email', '')
+    if not email:
+        return jsonify({"error": "email query param required"}), 400
+    try:
+        r = _requests.delete(
+            f"{_supa_url}/rest/v1/lead_tags?email=eq.{_requests.utils.quote(email, safe='')}",
+            headers=_supa_headers(),
+            timeout=10,
+        )
+        if r.ok:
+            return jsonify({"deleted": True})
+        return jsonify({"error": r.text, "code": "supabase_error"}), 502
+    except Exception as e:
+        return jsonify({"error": str(e), "code": "request_failed"}), 502
 
 
 # ── Vercel entry point ───────────────────────────────────────────────────────────

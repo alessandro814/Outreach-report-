@@ -23,6 +23,16 @@ const COLORS = {
   AUTO_REPLY:     '#8b5cf6',
 };
 
+// ── CRM Tag system ────────────────────────────────────────────────────────────
+const TAGS = {
+  'Free Affiliate':    { color: '#2563eb', bg: '#dbeafe', cls: 'tag-free-affiliate' },
+  'Closed':            { color: '#059669', bg: '#d1fae5', cls: 'tag-closed' },
+  'Said NO':           { color: '#dc2626', bg: '#fee2e2', cls: 'tag-said-no' },
+  'LOST':              { color: '#6b7280', bg: '#f3f4f6', cls: 'tag-lost' },
+  'Waiting for rates': { color: '#d97706', bg: '#fef3c7', cls: 'tag-waiting-rates' },
+};
+const TAG_LIST = Object.keys(TAGS);
+
 // ── state ─────────────────────────────────────────────
 // ── Date filter state ─────────────────────────────
 let dateFilter = { mode: 'all', from: '', to: '' };
@@ -43,6 +53,11 @@ let hlPage = 1;
 const HL_PER_PAGE = 50;
 let hlFilters = { search: '', campaign: '', classification: '', reviewOnly: false };
 let hlSort    = { col: 'classification', dir: 'asc' };
+
+// ── Tag state ──────────────────────────────────────────────────────────────
+let tagsMap = {};        // { email → { assigned_tag, notes, creator_handle, campaign_name, updated_at } }
+let tagFilter = '';      // '' = no filter, or one of the TAG_LIST values
+let tagsAvailable = true; // false if Supabase not configured
 
 let chartDonut    = null;
 let chartTopCamps = null;
@@ -82,6 +97,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupAIChatInput();
   setupHandleLookup();
   checkAIStatus();
+  // Set initial "Showing: All time" badge and populate debug panel counts
+  const badge = document.getElementById('date-active-badge');
+  if (badge) { badge.textContent = 'Showing: All time'; badge.style.display = ''; }
+  updateDebugPanel();
+  setupTagFilterBar();
+  setupTagListeners();
+  setupTagStatusFilter();
+  loadAllTags();
 });
 
 /* ═══════════════════════════════════════════════════
@@ -200,8 +223,9 @@ function setupTabs() {
       document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
       btn.classList.add('active');
       document.getElementById(btn.dataset.target).classList.add('active');
-      if (btn.dataset.target === 'page-campaigns' && !chartStacked) renderStackedChart();
+      if (btn.dataset.target === 'page-campaigns') renderStackedChart();
       if (btn.dataset.target === 'page-ai') checkAIStatus();
+      if (btn.dataset.target === 'page-leadstatus') renderTagStatus();
     });
   });
 }
@@ -210,17 +234,20 @@ function setupTabs() {
    KPIs
 ═══════════════════════════════════════════════════ */
 function renderKPIs() {
-  const c = D.campaigns;
-  const totalInbound = c.reduce((s,x) => s + x.total_inbound, 0);
-  const totalYes     = c.reduce((s,x) => s + x.yes, 0);
-  const totalInt     = c.reduce((s,x) => s + x.interested, 0);
-  const totalNo      = c.reduce((s,x) => s + x.no, 0);
-  const totalNI      = c.reduce((s,x) => s + x.not_interested, 0);
-  const totalAR      = c.reduce((s,x) => s + x.auto_reply, 0);
+  const filtLeads    = applyDateFilter(D.leads);
+  const totalYes     = filtLeads.filter(l => l.classification === 'YES').length;
+  const totalInt     = filtLeads.filter(l => l.classification === 'INTERESTED').length;
+  const totalNo      = filtLeads.filter(l => l.classification === 'NO').length;
+  const totalNI      = filtLeads.filter(l => l.classification === 'NOT_INTERESTED').length;
+  const totalAR      = filtLeads.filter(l => l.classification === 'AUTO_REPLY').length;
+  const totalInbound = totalYes + totalInt + totalNo + totalNI + totalAR;
   const pos          = totalYes + totalInt;
-  const neg          = totalNo + totalNI;
+  const neg          = totalNo  + totalNI;
+  const activeCamps  = dateFilter.mode === 'all'
+    ? D.campaigns.length
+    : new Set(filtLeads.map(l => l.campaign_name)).size;
 
-  set('kpi-camps',    c.length);
+  set('kpi-camps',    activeCamps);
   set('kpi-leads',    D.leads.length.toLocaleString());
   set('kpi-inbound',  totalInbound);
   set('kpi-yes',      totalYes);
@@ -230,7 +257,7 @@ function renderKPIs() {
   set('kpi-ar',       totalAR);
   set('kpi-pos-rate', totalInbound > 0 ? (pos/totalInbound*100).toFixed(1)+'%' : '0%');
   set('kpi-neg-rate', totalInbound > 0 ? (neg/totalInbound*100).toFixed(1)+'%' : '0%');
-  set('kpi-zero',     c.filter(x => x.total_inbound === 0).length);
+  set('kpi-zero',     D.campaigns.filter(x => x.total_inbound === 0).length);
 }
 
 function set(id, val) { const el = document.getElementById(id); if (el) el.textContent = val; }
@@ -241,14 +268,15 @@ function set(id, val) { const el = document.getElementById(id); if (el) el.textC
 function renderOverviewCharts() { renderDonut(); renderTopCampsChart(); }
 
 function renderDonut() {
-  const c = D.campaigns;
+  const filtLeads = applyDateFilter(D.leads);
   const totals = {
-    YES:            c.reduce((s,x) => s + x.yes, 0),
-    INTERESTED:     c.reduce((s,x) => s + x.interested, 0),
-    NO:             c.reduce((s,x) => s + x.no, 0),
-    NOT_INTERESTED: c.reduce((s,x) => s + x.not_interested, 0),
-    AUTO_REPLY:     c.reduce((s,x) => s + x.auto_reply, 0),
+    YES:            filtLeads.filter(l => l.classification === 'YES').length,
+    INTERESTED:     filtLeads.filter(l => l.classification === 'INTERESTED').length,
+    NO:             filtLeads.filter(l => l.classification === 'NO').length,
+    NOT_INTERESTED: filtLeads.filter(l => l.classification === 'NOT_INTERESTED').length,
+    AUTO_REPLY:     filtLeads.filter(l => l.classification === 'AUTO_REPLY').length,
   };
+  if (chartDonut) { chartDonut.destroy(); chartDonut = null; }
   chartDonut = new Chart(document.getElementById('chartDonut').getContext('2d'), {
     type: 'doughnut',
     data: {
@@ -277,11 +305,12 @@ function renderDonut() {
 }
 
 function renderTopCampsChart() {
-  const sorted = [...D.campaigns]
+  const sorted = [...getFilteredCampaigns()]
     .filter(c => c.total_inbound > 0)
     .sort((a,b) => b.positive_total - a.positive_total)
     .slice(0, 20);
 
+  if (chartTopCamps) { chartTopCamps.destroy(); chartTopCamps = null; }
   chartTopCamps = new Chart(document.getElementById('chartTopCamps').getContext('2d'), {
     type: 'bar',
     data: {
@@ -306,7 +335,8 @@ function renderTopCampsChart() {
 }
 
 function renderStackedChart() {
-  const camps = [...D.campaigns].filter(c => c.total_inbound > 0);
+  const camps = [...getFilteredCampaigns()].filter(c => c.total_inbound > 0);
+  if (chartStacked) { chartStacked.destroy(); chartStacked = null; }
   chartStacked = new Chart(document.getElementById('chartStacked').getContext('2d'), {
     type: 'bar',
     data: {
@@ -334,7 +364,7 @@ function renderStackedChart() {
    RANKING TABLE (Overview)
 ═══════════════════════════════════════════════════ */
 function renderRankingTable() {
-  const top = [...D.campaigns]
+  const top = [...getFilteredCampaigns()]
     .sort((a,b) => b.health_score - a.health_score)
     .slice(0, 15);
 
@@ -379,7 +409,7 @@ function renderCampaignTable() {
 
 function paintCampaignRows() {
   const { col, dir } = campSort;
-  const sorted = [...D.campaigns].sort((a,b) => {
+  const sorted = [...getFilteredCampaigns()].sort((a,b) => {
     const av = typeof a[col]==='string' ? a[col].toLowerCase() : a[col];
     const bv = typeof b[col]==='string' ? b[col].toLowerCase() : b[col];
     return dir==='asc' ? (av > bv ? 1 : -1) : (av < bv ? 1 : -1);
@@ -514,7 +544,7 @@ function renderLeads() {
 
   const tbody = document.querySelector('#leadsTable tbody');
   if (!slice.length) {
-    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#9ca3af;padding:36px">No leads match the current filters.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#9ca3af;padding:36px">No leads match the current filters.</td></tr>';
   } else {
     tbody.innerHTML = slice.map(l => {
       const hotBadge  = l.hot_lead ? ' <span class="hot-tag">🔥 hot</span>' : '';
@@ -534,11 +564,14 @@ function renderLeads() {
           <td><span class="badge badge-${l.classification}">${l.classification.replace(/_/g,' ')}</span>${hotBadge}${l.is_fallback ? ' <span class="fallback-tag">review</span>' : ''}</td>
           <td class="reason-cell">${reasonDisplay}</td>
           <td class="reply-cell" title="${esc(l.reply_text)}">${esc(summary)||'<span style="color:#d1d5db">—</span>'}</td>
+          <td>${tagSelectHtml(l)}</td>
           <td style="text-align:center"><button class="btn-ai-sm" onclick="openAIPanel('${esc(l.email)}','${esc(l.campaign_name)}')">✦</button></td>
         </tr>
       `;
     }).join('');
   }
+  // Apply tag select styles
+  document.querySelectorAll('#leadsTable .tag-select').forEach(sel => styleTagSelect(sel, sel.value));
   renderPagination(pages);
 }
 
@@ -656,12 +689,14 @@ function renderHits(hits, container, q) {
       ? `<span style="color:#9ca3af;font-size:11px;margin-left:8px">${esc(l.timestamp.slice(0,10))}</span>` : '';
     const handleLine = l.creator_handle
       ? `<span class="handle-tag" style="margin-right:6px">@${esc(l.creator_handle)}</span>` : '';
+    const tagBadge = tagBadgeHtml(l.email);
     return `
       <div class="lookup-hit hit-${l.classification}">
         <div class="hit-top">
           ${handleLine}<span class="hit-email">${esc(l.email)}</span>
           <span class="badge badge-${l.classification}">${l.classification.replace(/_/g,' ')}</span>
           ${hotLine}
+          ${tagBadge ? `<span style="margin-left:6px">${tagBadge}</span>` : ''}
           ${tsLine}
         </div>
         <div class="hit-meta">
@@ -690,7 +725,7 @@ function esc(s) {
 ═══════════════════════════════════════════════════ */
 
 function renderHotLeadsKPIs() {
-  const hot = D.leads.filter(l => l.classification === 'YES' || l.classification === 'INTERESTED');
+  const hot = applyDateFilter(D.leads).filter(l => l.classification === 'YES' || l.classification === 'INTERESTED');
   set('hl-total',  hot.length);
   set('hl-yes',    hot.filter(l => l.classification === 'YES').length);
   set('hl-int',    hot.filter(l => l.classification === 'INTERESTED').length);
@@ -1300,7 +1335,7 @@ function negativeLeads() {
 }
 
 function renderNoReasonsKPIs() {
-  const neg  = negativeLeads();
+  const neg  = applyDateFilter(negativeLeads());
   const nos  = neg.filter(l => l.classification === 'NO').length;
   const nis  = neg.filter(l => l.classification === 'NOT_INTERESTED').length;
 
@@ -1569,37 +1604,335 @@ function startAutoRefresh() {
 }
 
 /* ═══════════════════════════════════════════════════
+   CRM TAGS
+═══════════════════════════════════════════════════ */
+
+async function loadAllTags() {
+  try {
+    const resp = await fetch(`${AI_BASE_URL}/api/tags`);
+    if (resp.status === 503) {
+      const j = await resp.json().catch(() => ({}));
+      if (j.code === 'no_supabase') {
+        tagsAvailable = false;
+        showTagsUnavailableBanner(true);
+        return;
+      }
+    }
+    if (!resp.ok) return;
+    const rows = await resp.json();
+    tagsMap = {};
+    (Array.isArray(rows) ? rows : []).forEach(r => {
+      tagsMap[r.email] = r;
+    });
+    tagsAvailable = true;
+    showTagsUnavailableBanner(false);
+    refreshTagUI();
+  } catch (e) {
+    // network error — don't mark unavailable, just silently fail
+    console.warn('Tags: could not load', e);
+  }
+}
+
+function showTagsUnavailableBanner(show) {
+  const el = document.getElementById('tags-unavailable-banner');
+  if (el) el.style.display = show ? '' : 'none';
+}
+
+async function quickSaveTag(email, handle, campaign, tag, notes) {
+  if (!email) return;
+  notes = notes !== undefined ? notes : (tagsMap[email]?.notes || '');
+  // Optimistic update
+  if (tag) {
+    tagsMap[email] = { email, creator_handle: handle || '', campaign_name: campaign || '', assigned_tag: tag, notes, updated_at: new Date().toISOString() };
+  } else {
+    delete tagsMap[email];
+  }
+  refreshTagUI();
+
+  try {
+    if (tag) {
+      await fetch(`${AI_BASE_URL}/api/tags`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, creator_handle: handle || '', campaign_name: campaign || '', assigned_tag: tag, notes }),
+      });
+    } else {
+      await fetch(`${AI_BASE_URL}/api/tags?email=${encodeURIComponent(email)}`, { method: 'DELETE' });
+    }
+  } catch (e) {
+    console.warn('Tags: save failed', e);
+  }
+}
+
+async function saveTagNotes(email, notes) {
+  const existing = tagsMap[email];
+  if (!existing) return;
+  await quickSaveTag(email, existing.creator_handle, existing.campaign_name, existing.assigned_tag, notes);
+}
+
+function refreshTagUI() {
+  renderTagCounts();
+  renderTagStatus();
+  // Re-style existing tag selects in leads table
+  document.querySelectorAll('.tag-select').forEach(sel => {
+    styleTagSelect(sel, sel.value);
+  });
+}
+
+function renderTagCounts() {
+  const vals = Object.values(tagsMap);
+  set('tag-count-free-affiliate', vals.filter(t => t.assigned_tag === 'Free Affiliate').length);
+  set('tag-count-closed',         vals.filter(t => t.assigned_tag === 'Closed').length);
+  set('tag-count-said-no',        vals.filter(t => t.assigned_tag === 'Said NO').length);
+  set('tag-count-lost',           vals.filter(t => t.assigned_tag === 'LOST').length);
+  set('tag-count-waiting',        vals.filter(t => t.assigned_tag === 'Waiting for rates').length);
+}
+
+function tagBadgeHtml(email) {
+  const t = tagsMap[email];
+  if (!t || !t.assigned_tag) return '';
+  const cfg = TAGS[t.assigned_tag];
+  if (!cfg) return '';
+  return `<span class="lead-tag-badge ${cfg.cls}" style="background:${cfg.bg};color:${cfg.color};border-color:${cfg.color}">${esc(t.assigned_tag)}</span>`;
+}
+
+function tagSelectHtml(lead) {
+  const email    = lead.email;
+  const handle   = (lead.creator_handle || '').replace(/"/g, '&quot;');
+  const campaign = (lead.campaign_name  || '').replace(/"/g, '&quot;');
+  const current  = tagsMap[email]?.assigned_tag || '';
+  const opts = TAG_LIST.map(t =>
+    `<option value="${t}" ${current === t ? 'selected' : ''}>${t}</option>`
+  ).join('');
+  return `<select class="tag-select" data-email="${esc(email)}" data-handle="${handle}" data-campaign="${campaign}">
+    <option value="">— Tag —</option>${opts}
+  </select>`;
+}
+
+function styleTagSelect(sel, tag) {
+  if (!tag) {
+    sel.style.background  = '';
+    sel.style.color       = '';
+    sel.style.borderColor = '';
+    sel.style.fontWeight  = '';
+    return;
+  }
+  const cfg = TAGS[tag];
+  if (cfg) {
+    sel.style.background  = cfg.bg;
+    sel.style.color       = cfg.color;
+    sel.style.borderColor = cfg.color;
+    sel.style.fontWeight  = '600';
+  }
+}
+
+function setupTagListeners() {
+  // Event delegation: tag select changes anywhere on page
+  document.body.addEventListener('change', e => {
+    const sel = e.target.closest('.tag-select');
+    if (!sel) return;
+    const email    = sel.dataset.email    || '';
+    const handle   = sel.dataset.handle   || '';
+    const campaign = sel.dataset.campaign || '';
+    const tag = sel.value;
+    styleTagSelect(sel, tag);
+    quickSaveTag(email, handle, campaign, tag);
+  });
+
+  // Notes blur: auto-save notes
+  document.body.addEventListener('focusout', e => {
+    const el = e.target;
+    if (!el.classList.contains('tag-notes-input')) return;
+    const email = el.dataset.email || '';
+    if (!email) return;
+    saveTagNotes(email, el.value.trim());
+  });
+}
+
+function setupTagFilterBar() {
+  document.querySelectorAll('.tag-filter-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tag-filter-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      tagFilter = btn.dataset.tag || '';
+      // Update badge
+      const badge = document.getElementById('tag-filter-badge');
+      if (badge) {
+        if (tagFilter) {
+          const cfg = TAGS[tagFilter];
+          badge.textContent = `Filtered: ${tagFilter}`;
+          badge.style.display = '';
+          if (cfg) { badge.style.background = cfg.bg; badge.style.color = cfg.color; badge.style.borderColor = cfg.color; }
+        } else {
+          badge.style.display = 'none';
+        }
+      }
+      applyDateFilterToAll();
+    });
+  });
+}
+
+function setupTagStatusFilter() {
+  const sel = document.getElementById('tag-status-filter');
+  if (sel) sel.addEventListener('change', renderTagStatus);
+}
+
+function renderTagStatus() {
+  const filterSel = document.getElementById('tag-status-filter');
+  const activeTagFilter = filterSel ? filterSel.value : '';
+
+  // Build list of tagged leads from tagsMap, enriched with lead data
+  const taggedEmails = Object.keys(tagsMap);
+  const rows = taggedEmails
+    .filter(email => !activeTagFilter || tagsMap[email].assigned_tag === activeTagFilter)
+    .map(email => {
+      const tagData = tagsMap[email];
+      // Find lead in D.leads for extra fields
+      const lead = D.leads.find(l => l.email === email) || {
+        email,
+        creator_handle: tagData.creator_handle || '',
+        campaign_name:  tagData.campaign_name  || '',
+        classification: '', reason: '', clean_reply_summary: '', reply_text: '', hot_lead: false,
+      };
+      return { ...lead, ...tagData, assigned_tag: tagData.assigned_tag, notes: tagData.notes || '', updated_at: tagData.updated_at || '' };
+    })
+    .sort((a, b) => (b.updated_at || '').localeCompare(a.updated_at || ''));
+
+  const hint = document.getElementById('tag-status-hint');
+  if (hint) hint.textContent = `— ${rows.length} tagged lead${rows.length !== 1 ? 's' : ''}`;
+
+  const tbody = document.getElementById('tag-status-tbody');
+  if (!tbody) return;
+
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;color:#9ca3af;padding:36px">No tagged leads yet. Assign tags in Leads Explorer or Email Lookup.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = rows.map(r => {
+    const cfg = TAGS[r.assigned_tag] || {};
+    const handleCell = r.creator_handle
+      ? `<span class="handle-tag">@${esc(r.creator_handle)}</span>`
+      : '<span style="color:#d1d5db">—</span>';
+    const hotIcon = r.hot_lead ? '🔥' : '—';
+    const summary = r.clean_reply_summary || r.reply_text || '';
+    const updatedDisp = r.updated_at ? r.updated_at.slice(0, 10) : '—';
+    return `
+      <tr>
+        <td>${handleCell}</td>
+        <td style="font-weight:600;color:#111827;white-space:nowrap">${esc(r.email)}</td>
+        <td class="camp-name">${esc(r.campaign_name || '')}</td>
+        <td>${r.classification ? `<span class="badge badge-${r.classification}">${r.classification.replace(/_/g,' ')}</span>` : '—'}</td>
+        <td class="reason-cell">${esc(r.reason || '')}</td>
+        <td class="reply-cell" title="${esc(r.reply_text || '')}">${esc(summary) || '<span style="color:#d1d5db">—</span>'}</td>
+        <td style="text-align:center">${hotIcon}</td>
+        <td><span class="lead-tag-badge ${cfg.cls || ''}" style="background:${cfg.bg||'#f3f4f6'};color:${cfg.color||'#374151'};border-color:${cfg.color||'#e5e7eb'}">${esc(r.assigned_tag)}</span></td>
+        <td><input type="text" class="tag-notes-input" data-email="${esc(r.email)}" value="${esc(r.notes || '')}" placeholder="Add note…"></td>
+        <td style="color:#9ca3af;font-size:11px;white-space:nowrap">${updatedDisp}</td>
+        <td style="text-align:center"><button class="btn-ai-sm" onclick="openAIPanel('${esc(r.email)}','${esc(r.campaign_name||'')}')">✦</button></td>
+      </tr>
+    `;
+  }).join('');
+}
+
+function downloadTaggedLeadsCSV() {
+  const rows = Object.values(tagsMap).map(t => {
+    const lead = D.leads.find(l => l.email === t.email) || {};
+    return [t.email, t.creator_handle||'', t.campaign_name||'', lead.classification||'', t.assigned_tag, t.notes||'', t.updated_at||''];
+  });
+  const headers = ['email','creator_handle','campaign_name','classification','assigned_tag','notes','updated_at'];
+  const csv = [headers, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  a.download = 'tagged_leads.csv';
+  a.click();
+}
+
+/* ═══════════════════════════════════════════════════
    DATE FILTER
 ═══════════════════════════════════════════════════ */
 
-function todayStr()     { return new Date().toISOString().slice(0, 10); }
-function yesterdayStr() {
-  const d = new Date(); d.setDate(d.getDate() - 1); return d.toISOString().slice(0, 10);
+// ── Local-time date helpers (avoids UTC off-by-one for non-UTC timezones) ─────
+function _localDateStr(d) {
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 }
-function last7Str()     {
-  const d = new Date(); d.setDate(d.getDate() - 6); return d.toISOString().slice(0, 10);
+function _localMonthStr(d) {
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
 }
-function thisMonthStr() { return new Date().toISOString().slice(0, 7); }
+function todayStr()     { return _localDateStr(new Date()); }
+function yesterdayStr() { const d = new Date(); d.setDate(d.getDate()-1); return _localDateStr(d); }
+function last7Str()     { const d = new Date(); d.setDate(d.getDate()-6); return _localDateStr(d); }
+function thisMonthStr() { return _localMonthStr(new Date()); }
+
+// ── Compute campaign stats from a set of leads (for date-filtered views) ──────
+function campaignsFromLeads(leads) {
+  const map = {};
+  leads.forEach(l => {
+    if (!map[l.campaign_name]) {
+      map[l.campaign_name] = {
+        campaign_name: l.campaign_name,
+        total_inbound: 0, yes: 0, interested: 0,
+        no: 0, not_interested: 0, auto_reply: 0,
+      };
+    }
+    const c = map[l.campaign_name];
+    c.total_inbound++;
+    const cls = l.classification;
+    if      (cls === 'YES')            c.yes++;
+    else if (cls === 'INTERESTED')     c.interested++;
+    else if (cls === 'NO')             c.no++;
+    else if (cls === 'NOT_INTERESTED') c.not_interested++;
+    else if (cls === 'AUTO_REPLY')     c.auto_reply++;
+  });
+  return Object.values(map).map(c => {
+    const pos = c.yes + c.interested;
+    const neg = c.no + c.not_interested;
+    const tot = c.total_inbound;
+    return Object.assign(c, {
+      positive_total: pos,
+      negative_total: neg,
+      positive_rate:  tot > 0 ? +(pos/tot*100).toFixed(1) : 0,
+      negative_rate:  tot > 0 ? +(neg/tot*100).toFixed(1) : 0,
+      no_reply_rate:  tot > 0 ? +(c.no/tot*100).toFixed(1) : 0,
+      health_score:   tot > 0 ? +(pos*pos/tot).toFixed(1)  : 0,
+    });
+  });
+}
+
+// Returns D.campaigns for 'all time', otherwise computes from filtered leads
+function getFilteredCampaigns() {
+  return dateFilter.mode === 'all'
+    ? D.campaigns
+    : campaignsFromLeads(applyDateFilter(D.leads));
+}
 
 function applyDateFilter(leads) {
   const { mode, from, to } = dateFilter;
-  if (mode === 'all') return leads;
+  let filtered = leads;
 
-  return leads.filter(l => {
-    const d = l.date;
-    if (!d) return false; // no timestamp — exclude from date-filtered views
-    switch (mode) {
-      case 'today':     return d === todayStr();
-      case 'yesterday': return d === yesterdayStr();
-      case 'last7':     return d >= last7Str() && d <= todayStr();
-      case 'thismonth': return l.month === thisMonthStr();
-      case 'range':
-        if (from && d < from) return false;
-        if (to   && d > to)   return false;
-        return true;
-      default: return true;
-    }
-  });
+  if (mode !== 'all') {
+    filtered = leads.filter(l => {
+      const d = l.date;
+      if (!d) return false; // no timestamp — exclude from date-filtered views
+      switch (mode) {
+        case 'today':     return d === todayStr();
+        case 'yesterday': return d === yesterdayStr();
+        case 'last7':     return d >= last7Str() && d <= todayStr();
+        case 'thismonth': return l.month === thisMonthStr();
+        case 'range':
+          if (from && d < from) return false;
+          if (to   && d > to)   return false;
+          return true;
+        default: return true;
+      }
+    });
+  }
+
+  if (tagFilter) {
+    filtered = filtered.filter(l => tagsMap[l.email]?.assigned_tag === tagFilter);
+  }
+
+  return filtered;
 }
 
 function setupDateFilter() {
@@ -1634,26 +1967,36 @@ function setupDateFilter() {
 }
 
 function applyDateFilterToAll() {
-  // Update active badge
+  // ── Update active filter label (always visible) ───────────────────────────
   const badge = document.getElementById('date-active-badge');
   if (badge) {
-    if (dateFilter.mode === 'all') {
-      badge.style.display = 'none';
-    } else {
-      const labels = {
-        today: 'Today', yesterday: 'Yesterday', last7: 'Last 7 days',
-        thismonth: 'This month',
-        range: `${dateFilter.from || '…'} → ${dateFilter.to || '…'}`,
-      };
-      badge.textContent = `Showing: ${labels[dateFilter.mode] || dateFilter.mode}`;
-      badge.style.display = '';
-    }
+    const labels = {
+      all:       'All time',
+      today:     'Today',
+      yesterday: 'Yesterday',
+      last7:     'Last 7 days',
+      thismonth: 'This month',
+      range:     `${dateFilter.from || '…'} to ${dateFilter.to || '…'}`,
+    };
+    badge.textContent = `Showing: ${labels[dateFilter.mode] || dateFilter.mode}`;
+    badge.style.display = '';
   }
 
-  // Re-render all lead-level views
+  // ── Re-render KPIs, charts, tables ───────────────────────────────────────
+  renderKPIs();
+  renderDonut();
+  renderTopCampsChart();
+  renderRankingTable();
+  if (chartStacked) renderStackedChart();   // only if campaigns tab was already opened
+  renderHotLeadsKPIs();
+  renderNoReasonsKPIs();
+
   leadsPage = 1; renderLeads();
   hlPage    = 1; renderHotLeads();
   noPage    = 1; renderNoReasons();
+  renderTagStatus();
+
+  updateDebugPanel();
 }
 
 /* ═══════════════════════════════════════════════════
@@ -1687,12 +2030,15 @@ function doHandleLookup() {
     const declineLine = l.decline_category
       ? `<div class="hit-reason" style="color:#ef4444">Decline reason: <strong>${esc(l.decline_category)}</strong></div>` : '';
     const summary = l.clean_reply_summary || l.reply_text || '';
+    const tagBadge = tagBadgeHtml(l.email);
     return `
       <div class="lookup-hit hit-${l.classification}">
         <div class="hit-top">
           ${handleDisp}<span class="hit-email">${esc(l.email)}</span>
           <span class="badge badge-${l.classification}">${l.classification.replace(/_/g,' ')}</span>
-          ${hotLine}${tsLine}
+          ${hotLine}
+          ${tagBadge ? `<span style="margin-left:6px">${tagBadge}</span>` : ''}
+          ${tsLine}
         </div>
         <div class="hit-meta">
           <span>Campaign: <strong>${esc(l.campaign_name)}</strong></span>
@@ -1716,4 +2062,42 @@ function renderTodayMetrics() {
   set('today-hot',     today.filter(l => l.hot_lead).length);
   set('today-no',      today.filter(l => l.classification === 'NO' || l.classification === 'NOT_INTERESTED').length);
   set('today-camps',   new Set(today.map(l => l.campaign_name)).size);
+}
+
+/* ═══════════════════════════════════════════════════
+   DEBUG PANEL
+═══════════════════════════════════════════════════ */
+
+function updateDebugPanel() {
+  const panel = document.getElementById('debug-panel-body');
+  if (!panel) return;
+  const totalRaw      = D.leads.length;
+  const withTimestamp = D.leads.filter(l => l.date).length;
+  const afterFilter   = applyDateFilter(D.leads).length;
+  const localDate     = todayStr();
+  const tz            = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const filterLabels  = {
+    all: 'All time', today: 'Today', yesterday: 'Yesterday',
+    last7: 'Last 7 days', thismonth: 'This month', range: 'Custom range',
+  };
+  panel.innerHTML = `
+    <table class="debug-table">
+      <tr><td>Total raw rows loaded</td><td><strong>${totalRaw.toLocaleString()}</strong></td></tr>
+      <tr><td>Rows with valid timestamps</td><td><strong>${withTimestamp.toLocaleString()}</strong></td></tr>
+      <tr><td>Rows after current filter</td><td><strong>${afterFilter.toLocaleString()}</strong></td></tr>
+      <tr><td>Current detected local date</td><td><strong>${localDate}</strong></td></tr>
+      <tr><td>Active timezone</td><td><strong>${tz}</strong></td></tr>
+      <tr><td>Active filter</td><td><strong>${filterLabels[dateFilter.mode] || dateFilter.mode}${dateFilter.mode === 'range' ? ` (${dateFilter.from || '…'} → ${dateFilter.to || '…'})` : ''}</strong></td></tr>
+    </table>
+  `;
+}
+
+function toggleDebugPanel() {
+  const body = document.getElementById('debug-panel-body');
+  const btn  = document.getElementById('debug-toggle-btn');
+  if (!body) return;
+  const visible = body.style.display !== 'none';
+  body.style.display = visible ? 'none' : '';
+  btn.textContent    = visible ? 'Show Debug' : 'Hide Debug';
+  if (!visible) updateDebugPanel();
 }
