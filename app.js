@@ -55,9 +55,16 @@ let hlFilters = { search: '', campaign: '', classification: '', reviewOnly: fals
 let hlSort    = { col: 'classification', dir: 'asc' };
 
 // ── Tag state ──────────────────────────────────────────────────────────────
-let tagsMap = {};        // { email → { assigned_tag, notes, creator_handle, campaign_name, updated_at } }
+let tagsMap = {};        // { email → { assigned_tag, notes, creator_handle, campaign_name, updated_at, record_type, platform, source } }
 let tagFilter = '';      // '' = no filter, or one of the TAG_LIST values
 let tagsAvailable = true; // false if Supabase not configured
+
+// ── Lead Status search state ───────────────────────────────────────────────
+let leadStatusSearch = { handle: '', email: '' };
+
+// ── Creator modal state ────────────────────────────────────────────────────
+let _creatorModalMode = 'add'; // 'add' | 'edit'
+let _creatorEditEmail = null;
 
 let chartDonut    = null;
 let chartTopCamps = null;
@@ -1641,18 +1648,28 @@ function startAutoRefresh() {
 ═══════════════════════════════════════════════════ */
 
 async function loadAllTags() {
+  console.log('[Tags] loadAllTags() called — fetching from', `${AI_BASE_URL}/api/tags`);
   try {
     const resp = await fetch(`${AI_BASE_URL}/api/tags`);
+    console.log('[Tags] GET /api/tags response status:', resp.status);
     if (resp.status === 503) {
       const j = await resp.json().catch(() => ({}));
+      console.warn('[Tags] Supabase unavailable:', j);
       if (j.code === 'no_supabase') {
         tagsAvailable = false;
         showTagsUnavailableBanner(true);
         return;
       }
     }
-    if (!resp.ok) return;
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => '');
+      console.error('[Tags] loadAllTags failed:', resp.status, errText);
+      tagsAvailable = false;
+      showTagsUnavailableBanner(true);
+      return;
+    }
     const rows = await resp.json();
+    console.log('[Tags] Loaded', Array.isArray(rows) ? rows.length : 0, 'tags from Supabase:', rows);
     tagsMap = {};
     (Array.isArray(rows) ? rows : []).forEach(r => {
       tagsMap[r.email] = r;
@@ -1661,8 +1678,9 @@ async function loadAllTags() {
     showTagsUnavailableBanner(false);
     refreshTagUI();
   } catch (e) {
-    // network error — don't mark unavailable, just silently fail
-    console.warn('Tags: could not load', e);
+    console.error('[Tags] loadAllTags network error:', e);
+    tagsAvailable = false;
+    showTagsUnavailableBanner(true);
   }
 }
 
@@ -1671,29 +1689,114 @@ function showTagsUnavailableBanner(show) {
   if (el) el.style.display = show ? '' : 'none';
 }
 
+let _tagToastTimer = null;
+function showTagSaveToast(success, message) {
+  let el = document.getElementById('tag-save-toast');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'tag-save-toast';
+    el.style.cssText = [
+      'position:fixed', 'bottom:24px', 'right:24px', 'z-index:9999',
+      'padding:10px 18px', 'border-radius:8px', 'font-size:13px',
+      'font-weight:600', 'pointer-events:none',
+      'transition:opacity 0.3s', 'opacity:0',
+      'box-shadow:0 4px 12px rgba(0,0,0,0.18)',
+    ].join(';');
+    document.body.appendChild(el);
+  }
+  clearTimeout(_tagToastTimer);
+  if (success) {
+    el.textContent = '✓ ' + (message || 'Tag saved');
+    el.style.background = '#d1fae5';
+    el.style.color = '#065f46';
+    el.style.border = '1px solid #6ee7b7';
+  } else {
+    el.textContent = '✗ ' + (message || 'Save failed');
+    el.style.background = '#fee2e2';
+    el.style.color = '#7f1d1d';
+    el.style.border = '1px solid #fca5a5';
+  }
+  el.style.opacity = '1';
+  _tagToastTimer = setTimeout(() => { el.style.opacity = '0'; }, success ? 2000 : 4000);
+}
+
 async function quickSaveTag(email, handle, campaign, tag, notes) {
   if (!email) return;
-  notes = notes !== undefined ? notes : (tagsMap[email]?.notes || '');
+  const existing = tagsMap[email] || {};
+  notes = notes !== undefined ? notes : (existing.notes || '');
+  const isManual = existing.record_type === 'manual';
+
+  // Snapshot previous state for rollback on failure
+  const previousEntry = existing.email ? { ...existing } : null;
+
+  // Build full record preserving record_type / platform / source
+  const fullRecord = {
+    record_type: existing.record_type || 'instantly',
+    platform:    existing.platform    || '',
+    source:      existing.source      || '',
+    email,
+    creator_handle: handle || existing.creator_handle || '',
+    campaign_name:  campaign || existing.campaign_name || '',
+    assigned_tag:   tag,
+    notes,
+    updated_at: new Date().toISOString(),
+  };
+
   // Optimistic update
-  if (tag) {
-    tagsMap[email] = { email, creator_handle: handle || '', campaign_name: campaign || '', assigned_tag: tag, notes, updated_at: new Date().toISOString() };
+  if (tag || isManual) {
+    tagsMap[email] = { ...fullRecord };
   } else {
     delete tagsMap[email];
   }
   refreshTagUI();
 
+  console.log(`[Tags] Saving tag for ${email}: tag="${tag}", notes="${notes}"`);
+
   try {
-    if (tag) {
-      await fetch(`${AI_BASE_URL}/api/tags`, {
+    let resp;
+    if (tag || isManual) {
+      resp = await fetch(`${AI_BASE_URL}/api/tags`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, creator_handle: handle || '', campaign_name: campaign || '', assigned_tag: tag, notes }),
+        body: JSON.stringify(fullRecord),
       });
     } else {
-      await fetch(`${AI_BASE_URL}/api/tags?email=${encodeURIComponent(email)}`, { method: 'DELETE' });
+      resp = await fetch(`${AI_BASE_URL}/api/tags?email=${encodeURIComponent(email)}`, { method: 'DELETE' });
     }
+
+    console.log(`[Tags] Save response status: ${resp.status}`);
+
+    if (!resp.ok) {
+      const errText = await resp.text().catch(() => '');
+      console.error('[Tags] Save failed — HTTP', resp.status, errText);
+      // Revert optimistic update
+      if (previousEntry) {
+        tagsMap[email] = previousEntry;
+      } else {
+        delete tagsMap[email];
+      }
+      refreshTagUI();
+      showTagSaveToast(false, `Save failed (HTTP ${resp.status})`);
+      return;
+    }
+
+    const saved = await resp.json().catch(() => null);
+    console.log('[Tags] Save confirmed by server:', saved);
+    showTagSaveToast(true);
+
+    // Re-fetch from Supabase to confirm persistence
+    await loadAllTags();
+
   } catch (e) {
-    console.warn('Tags: save failed', e);
+    console.error('[Tags] Save network error:', e);
+    // Revert optimistic update
+    if (previousEntry) {
+      tagsMap[email] = previousEntry;
+    } else {
+      delete tagsMap[email];
+    }
+    refreshTagUI();
+    showTagSaveToast(false, 'Save failed — network error');
   }
 }
 
@@ -1808,61 +1911,107 @@ function setupTagFilterBar() {
 function setupTagStatusFilter() {
   const sel = document.getElementById('tag-status-filter');
   if (sel) sel.addEventListener('change', renderTagStatus);
+
+  const sh = document.getElementById('ls-search-handle');
+  const se = document.getElementById('ls-search-email');
+  if (sh) sh.addEventListener('input', () => { leadStatusSearch.handle = sh.value.trim(); renderTagStatus(); });
+  if (se) se.addEventListener('input', () => { leadStatusSearch.email  = se.value.trim(); renderTagStatus(); });
 }
 
 function renderTagStatus() {
-  const filterSel = document.getElementById('tag-status-filter');
+  const filterSel       = document.getElementById('tag-status-filter');
   const activeTagFilter = filterSel ? filterSel.value : '';
+  const searchHandle    = leadStatusSearch.handle.toLowerCase();
+  const searchEmail     = leadStatusSearch.email.toLowerCase();
 
-  // Build list of tagged leads from tagsMap, enriched with lead data
-  const taggedEmails = Object.keys(tagsMap);
-  const rows = taggedEmails
-    .filter(email => !activeTagFilter || tagsMap[email].assigned_tag === activeTagFilter)
+  const rows = Object.keys(tagsMap)
+    .filter(email => {
+      const d = tagsMap[email];
+      if (activeTagFilter && d.assigned_tag !== activeTagFilter) return false;
+      if (searchHandle && !(d.creator_handle || '').toLowerCase().includes(searchHandle)) return false;
+      if (searchEmail) {
+        // synthetic emails start with __manual__ — compare only real emails
+        const dispEmail = email.startsWith('__manual__') ? '' : email;
+        if (!dispEmail.toLowerCase().includes(searchEmail)) return false;
+      }
+      return true;
+    })
     .map(email => {
       const tagData = tagsMap[email];
-      // Find lead in D.leads for extra fields
       const lead = D.leads.find(l => l.email === email) || {
         email,
         creator_handle: tagData.creator_handle || '',
         campaign_name:  tagData.campaign_name  || '',
         classification: '', reason: '', clean_reply_summary: '', reply_text: '', hot_lead: false,
       };
-      return { ...lead, ...tagData, assigned_tag: tagData.assigned_tag, notes: tagData.notes || '', updated_at: tagData.updated_at || '' };
+      return {
+        ...lead, ...tagData,
+        assigned_tag: tagData.assigned_tag || '',
+        notes:       tagData.notes        || '',
+        updated_at:  tagData.updated_at   || '',
+        record_type: tagData.record_type  || 'instantly',
+        platform:    tagData.platform     || '',
+        source:      tagData.source       || '',
+      };
     })
     .sort((a, b) => (b.updated_at || '').localeCompare(a.updated_at || ''));
 
   const hint = document.getElementById('tag-status-hint');
-  if (hint) hint.textContent = `— ${rows.length} tagged lead${rows.length !== 1 ? 's' : ''}`;
+  if (hint) hint.textContent = `— ${rows.length} creator${rows.length !== 1 ? 's' : ''}`;
 
   const tbody = document.getElementById('tag-status-tbody');
   if (!tbody) return;
 
   if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="11" style="text-align:center;color:#9ca3af;padding:36px">No tagged leads yet. Assign tags in Leads Explorer or Email Lookup.</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="14" style="text-align:center;color:#9ca3af;padding:36px">No creators yet. Assign tags in Leads Explorer or click "+ Add Creator".</td></tr>';
     return;
   }
 
   tbody.innerHTML = rows.map(r => {
-    const cfg = TAGS[r.assigned_tag] || {};
-    const handleCell = r.creator_handle
+    const cfg      = TAGS[r.assigned_tag] || {};
+    const isManual = r.record_type === 'manual';
+    const isSynth  = r.email.startsWith('__manual__');
+
+    const handleCell  = r.creator_handle
       ? `<span class="handle-tag">@${esc(r.creator_handle)}</span>`
       : '<span style="color:#d1d5db">—</span>';
-    const hotIcon = r.hot_lead ? '🔥' : '—';
-    const summary = r.clean_reply_summary || r.reply_text || '';
+    const displayEmail = isSynth ? '<span style="color:#d1d5db">—</span>' : `<span style="font-weight:600;color:#111827">${esc(r.email)}</span>`;
+    const hotIcon     = r.hot_lead ? '🔥' : '—';
+    const summary     = r.clean_reply_summary || r.reply_text || '';
     const updatedDisp = r.updated_at ? r.updated_at.slice(0, 10) : '—';
+
+    const typeBadge = isManual
+      ? `<span style="background:#ede9fe;color:#5b21b6;border:1px solid #c4b5fd;border-radius:4px;padding:1px 7px;font-size:11px;font-weight:600;white-space:nowrap">manual</span>`
+      : `<span style="background:#e0f2fe;color:#0369a1;border:1px solid #bae6fd;border-radius:4px;padding:1px 7px;font-size:11px;font-weight:600;white-space:nowrap">instantly</span>`;
+
+    const tagCell = r.assigned_tag
+      ? `<span class="lead-tag-badge ${cfg.cls||''}" style="background:${cfg.bg||'#f3f4f6'};color:${cfg.color||'#374151'};border-color:${cfg.color||'#e5e7eb'}">${esc(r.assigned_tag)}</span>`
+      : '<span style="color:#d1d5db">—</span>';
+
+    const classCell = r.classification
+      ? `<span class="badge badge-${r.classification}">${r.classification.replace(/_/g,' ')}</span>`
+      : '<span style="color:#d1d5db">—</span>';
+
+    const actionCell = isManual
+      ? `<button class="btn-ai-sm" title="Edit" onclick="openCreatorModal('edit','${esc(r.email)}')" style="margin-right:4px">✎</button><button class="btn-ai-sm" title="Delete" onclick="deleteManualCreator('${esc(r.email)}')" style="background:#fee2e2;color:#dc2626;border-color:#fca5a5">✕</button>`
+      : `<button class="btn-ai-sm" title="AI Analysis" onclick="openAIPanel('${esc(r.email)}','${esc(r.campaign_name||'')}')">✦</button>`;
+
     return `
       <tr>
         <td>${handleCell}</td>
-        <td style="font-weight:600;color:#111827;white-space:nowrap">${esc(r.email)}</td>
+        <td style="white-space:nowrap">${displayEmail}</td>
         <td class="camp-name">${esc(r.campaign_name || '')}</td>
-        <td>${r.classification ? `<span class="badge badge-${r.classification}">${r.classification.replace(/_/g,' ')}</span>` : '—'}</td>
+        <td>${classCell}</td>
         <td class="reason-cell">${esc(r.reason || '')}</td>
         <td class="reply-cell" title="${esc(r.reply_text || '')}">${esc(summary) || '<span style="color:#d1d5db">—</span>'}</td>
         <td style="text-align:center">${hotIcon}</td>
-        <td><span class="lead-tag-badge ${cfg.cls || ''}" style="background:${cfg.bg||'#f3f4f6'};color:${cfg.color||'#374151'};border-color:${cfg.color||'#e5e7eb'}">${esc(r.assigned_tag)}</span></td>
+        <td>${tagCell}</td>
         <td><input type="text" class="tag-notes-input" data-email="${esc(r.email)}" value="${esc(r.notes || '')}" placeholder="Add note…"></td>
+        <td style="text-align:center">${typeBadge}</td>
+        <td style="color:#6b7280;font-size:12px">${esc(r.platform)}</td>
+        <td style="color:#6b7280;font-size:12px">${esc(r.source)}</td>
         <td style="color:#9ca3af;font-size:11px;white-space:nowrap">${updatedDisp}</td>
-        <td style="text-align:center"><button class="btn-ai-sm" onclick="openAIPanel('${esc(r.email)}','${esc(r.campaign_name||'')}')">✦</button></td>
+        <td style="text-align:center;white-space:nowrap">${actionCell}</td>
       </tr>
     `;
   }).join('');
@@ -1871,15 +2020,140 @@ function renderTagStatus() {
 function downloadTaggedLeadsCSV() {
   const rows = Object.values(tagsMap).map(t => {
     const lead = D.leads.find(l => l.email === t.email) || {};
-    return [t.email, t.creator_handle||'', t.campaign_name||'', lead.classification||'', t.assigned_tag, t.notes||'', t.updated_at||''];
+    const dispEmail = t.email.startsWith('__manual__') ? '' : t.email;
+    return [dispEmail, t.creator_handle||'', t.campaign_name||'', lead.classification||'', t.assigned_tag||'', t.notes||'', t.record_type||'instantly', t.platform||'', t.source||'', t.updated_at||''];
   });
-  const headers = ['email','creator_handle','campaign_name','classification','assigned_tag','notes','updated_at'];
+  const headers = ['email','creator_handle','campaign_name','classification','assigned_tag','notes','record_type','platform','source','updated_at'];
   const csv = [headers, ...rows].map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
   a.download = 'tagged_leads.csv';
   a.click();
 }
+
+/* ─────────────────────────────────────────────────
+   MANUAL CREATOR CRUD
+───────────────────────────────────────────────── */
+
+function openCreatorModal(mode, email) {
+  _creatorModalMode = mode || 'add';
+  _creatorEditEmail = email || null;
+
+  const overlay = document.getElementById('creator-modal-overlay');
+  const title   = document.getElementById('creator-modal-title');
+  const form    = document.getElementById('creator-form');
+  if (!overlay) return;
+  if (form) form.reset();
+
+  if (mode === 'edit' && email) {
+    title.textContent = 'Edit Creator';
+    const d = tagsMap[email] || {};
+    const dispEmail = email.startsWith('__manual__') ? '' : email;
+    _setFormVal('creator-form-handle',   d.creator_handle || '');
+    _setFormVal('creator-form-email',    dispEmail);
+    _setFormVal('creator-form-campaign', d.campaign_name  || '');
+    _setFormVal('creator-form-tag',      d.assigned_tag   || '');
+    _setFormVal('creator-form-platform', d.platform       || '');
+    _setFormVal('creator-form-source',   d.source         || '');
+    _setFormVal('creator-form-notes',    d.notes          || '');
+  } else {
+    title.textContent = 'Add Creator';
+  }
+
+  overlay.style.display = 'flex';
+}
+
+function closeCreatorModal() {
+  const overlay = document.getElementById('creator-modal-overlay');
+  if (overlay) overlay.style.display = 'none';
+}
+
+function _setFormVal(id, val) {
+  const el = document.getElementById(id);
+  if (el) el.value = val;
+}
+
+async function submitCreatorForm() {
+  const handle   = (document.getElementById('creator-form-handle')?.value   || '').trim().replace(/^@/, '');
+  const emailRaw = (document.getElementById('creator-form-email')?.value    || '').trim().toLowerCase();
+  const campaign = (document.getElementById('creator-form-campaign')?.value || '').trim();
+  const tag      = (document.getElementById('creator-form-tag')?.value      || '');
+  const platform = (document.getElementById('creator-form-platform')?.value || '');
+  const source   = (document.getElementById('creator-form-source')?.value   || '');
+  const notes    = (document.getElementById('creator-form-notes')?.value    || '').trim();
+
+  if (!handle) { alert('Creator handle is required.'); return; }
+
+  // Determine storage key (email or synthetic)
+  let newKey;
+  if (emailRaw) {
+    newKey = emailRaw;
+  } else if (_creatorModalMode === 'edit' && _creatorEditEmail) {
+    newKey = _creatorEditEmail; // preserve existing key
+  } else {
+    // Synthetic key for handle-only records — stable per handle
+    newKey = `__manual__${handle.toLowerCase().replace(/[^a-z0-9]/g, '_')}@manual.local`;
+  }
+
+  const record = {
+    email:          newKey,
+    creator_handle: handle,
+    campaign_name:  campaign,
+    assigned_tag:   tag,
+    notes,
+    record_type:    'manual',
+    platform,
+    source,
+  };
+
+  try {
+    // If key changed during edit, delete the old record first
+    if (_creatorModalMode === 'edit' && _creatorEditEmail && _creatorEditEmail !== newKey) {
+      await fetch(`${AI_BASE_URL}/api/tags?email=${encodeURIComponent(_creatorEditEmail)}`, { method: 'DELETE' });
+      delete tagsMap[_creatorEditEmail];
+    }
+
+    const resp = await fetch(`${AI_BASE_URL}/api/tags`, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body:    JSON.stringify(record),
+    });
+
+    if (!resp.ok) {
+      const err = await resp.text().catch(() => '');
+      console.error('[Creator] Save failed:', err);
+      showTagSaveToast(false, 'Failed to save creator');
+      return;
+    }
+
+    closeCreatorModal();
+    showTagSaveToast(true, _creatorModalMode === 'edit' ? 'Creator updated' : 'Creator added');
+    await loadAllTags();
+  } catch (e) {
+    console.error('[Creator] Network error:', e);
+    showTagSaveToast(false, 'Network error');
+  }
+}
+
+async function deleteManualCreator(email) {
+  const label = tagsMap[email]?.creator_handle || (email.startsWith('__manual__') ? email.split('__manual__')[1].split('@')[0] : email);
+  if (!confirm(`Delete creator "@${label}"?\nThis cannot be undone.`)) return;
+  try {
+    const resp = await fetch(`${AI_BASE_URL}/api/tags?email=${encodeURIComponent(email)}`, { method: 'DELETE' });
+    if (!resp.ok) { showTagSaveToast(false, 'Delete failed'); return; }
+    delete tagsMap[email];
+    refreshTagUI();
+    showTagSaveToast(true, 'Creator deleted');
+    await loadAllTags();
+  } catch (e) {
+    showTagSaveToast(false, 'Network error');
+  }
+}
+
+// Close creator modal on ESC key
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') closeCreatorModal();
+});
 
 /* ═══════════════════════════════════════════════════
    DATE FILTER

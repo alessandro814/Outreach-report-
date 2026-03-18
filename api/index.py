@@ -445,6 +445,38 @@ Return this exact JSON (no markdown):
     return jsonify({"recommendations": recs})
 
 
+# ── GET /api/tags/debug ───────────────────────────────────────────────────────────
+
+@app.route('/api/tags/debug', methods=['GET'])
+def debug_tags():
+    """Diagnostic endpoint — check Supabase config and table accessibility."""
+    supa_url_set = bool(_supa_url)
+    supa_key_set = bool(_supa_key)
+    result = {
+        "supabase_url_set": supa_url_set,
+        "supabase_key_set": supa_key_set,
+        "supabase_url_preview": (_supa_url[:40] + '...') if _supa_url else None,
+    }
+    if not supa_url_set or not supa_key_set:
+        result["error"] = "Missing SUPABASE_URL or SUPABASE_SERVICE_KEY env vars"
+        return jsonify(result), 503
+    try:
+        r = _requests.get(
+            f"{_supa_url}/rest/v1/lead_tags?select=count&limit=1",
+            headers=_supa_headers(),
+            timeout=10,
+        )
+        result["supabase_http_status"] = r.status_code
+        result["supabase_response_preview"] = r.text[:300]
+        result["table_accessible"] = r.ok
+        if not r.ok:
+            result["error"] = f"Supabase returned {r.status_code}: {r.text[:200]}"
+    except Exception as e:
+        result["error"] = str(e)
+        result["table_accessible"] = False
+    return jsonify(result)
+
+
 # ── GET /api/tags ────────────────────────────────────────────────────────────────
 
 @app.route('/api/tags', methods=['GET'])

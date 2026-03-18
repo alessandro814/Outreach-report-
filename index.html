@@ -649,6 +649,8 @@
     <div class="section-header">
       <h3>Tagged Leads <span class="hint" id="tag-status-hint">— loading…</span></h3>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input id="ls-search-handle" type="text" placeholder="Search by handle…" style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;width:150px">
+        <input id="ls-search-email"  type="text" placeholder="Search by email…"  style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;width:150px">
         <select id="tag-status-filter" class="tag-status-filter-select">
           <option value="">All Tags</option>
           <option value="Free Affiliate">Free Affiliate</option>
@@ -657,6 +659,7 @@
           <option value="LOST">LOST</option>
           <option value="Waiting for rates">Waiting for rates</option>
         </select>
+        <button onclick="openCreatorModal('add')" style="padding:6px 14px;background:#2563eb;color:#fff;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer">+ Add Creator</button>
         <button class="btn-download" onclick="downloadTaggedLeadsCSV()">⬇ Download CSV</button>
       </div>
     </div>
@@ -673,9 +676,12 @@
             <th>Summary</th>
             <th style="text-align:center">Hot</th>
             <th>Tag / Status</th>
-            <th style="min-width:200px">Notes</th>
+            <th style="min-width:180px">Notes</th>
+            <th style="white-space:nowrap">Type</th>
+            <th>Platform</th>
+            <th>Source</th>
             <th>Updated</th>
-            <th style="width:52px;text-align:center">AI</th>
+            <th style="text-align:center">Actions</th>
           </tr>
         </thead>
         <tbody id="tag-status-tbody"></tbody>
@@ -685,6 +691,93 @@
 
 </div><!-- /page-leadstatus -->
 
+
+<!-- ── Add / Edit Creator Modal ───────────────────── -->
+<div id="creator-modal-overlay"
+     style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:10000;align-items:center;justify-content:center"
+     onclick="if(event.target===this)closeCreatorModal()">
+  <div style="background:#fff;border-radius:12px;padding:28px 32px;width:min(520px,95vw);max-height:88vh;overflow-y:auto;position:relative;box-shadow:0 20px 60px rgba(0,0,0,0.25)">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:22px">
+      <h3 id="creator-modal-title" style="margin:0;font-size:18px;font-weight:700;color:#111827">Add Creator</h3>
+      <button onclick="closeCreatorModal()" style="background:none;border:none;font-size:24px;cursor:pointer;color:#9ca3af;line-height:1;padding:0 4px" title="Close">×</button>
+    </div>
+    <form id="creator-form" onsubmit="event.preventDefault();submitCreatorForm()">
+      <div style="display:grid;gap:14px">
+
+        <div>
+          <label style="display:block;font-size:13px;font-weight:600;color:#374151;margin-bottom:4px">Creator Handle <span style="color:#ef4444">*</span></label>
+          <input id="creator-form-handle" type="text" required placeholder="@handle"
+                 style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:14px;box-sizing:border-box">
+        </div>
+
+        <div>
+          <label style="display:block;font-size:13px;font-weight:600;color:#374151;margin-bottom:4px">Email <span style="font-weight:400;color:#9ca3af">(optional)</span></label>
+          <input id="creator-form-email" type="email" placeholder="creator@example.com"
+                 style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:14px;box-sizing:border-box">
+        </div>
+
+        <div>
+          <label style="display:block;font-size:13px;font-weight:600;color:#374151;margin-bottom:4px">Campaign Name <span style="font-weight:400;color:#9ca3af">(optional)</span></label>
+          <input id="creator-form-campaign" type="text" placeholder="e.g. Edikted"
+                 style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:14px;box-sizing:border-box">
+        </div>
+
+        <div>
+          <label style="display:block;font-size:13px;font-weight:600;color:#374151;margin-bottom:4px">Assign Tag</label>
+          <select id="creator-form-tag"
+                  style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:14px;background:#fff">
+            <option value="">— No Tag —</option>
+            <option>Free Affiliate</option>
+            <option>Closed</option>
+            <option>Said NO</option>
+            <option>LOST</option>
+            <option>Waiting for rates</option>
+          </select>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+          <div>
+            <label style="display:block;font-size:13px;font-weight:600;color:#374151;margin-bottom:4px">Platform <span style="font-weight:400;color:#9ca3af">(optional)</span></label>
+            <select id="creator-form-platform"
+                    style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:14px;background:#fff">
+              <option value="">— Select —</option>
+              <option>TikTok</option>
+              <option>Instagram</option>
+              <option>YouTube</option>
+              <option>Other</option>
+            </select>
+          </div>
+          <div>
+            <label style="display:block;font-size:13px;font-weight:600;color:#374151;margin-bottom:4px">Source <span style="font-weight:400;color:#9ca3af">(optional)</span></label>
+            <select id="creator-form-source"
+                    style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:14px;background:#fff">
+              <option value="">— Select —</option>
+              <option>Manual</option>
+              <option>WhatsApp</option>
+              <option>Referral</option>
+              <option>DM</option>
+              <option>Email</option>
+              <option>Other</option>
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <label style="display:block;font-size:13px;font-weight:600;color:#374151;margin-bottom:4px">Notes <span style="font-weight:400;color:#9ca3af">(optional)</span></label>
+          <textarea id="creator-form-notes" rows="3" placeholder="Add notes…"
+                    style="width:100%;padding:8px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:14px;resize:vertical;box-sizing:border-box"></textarea>
+        </div>
+
+      </div><!-- /grid -->
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:22px;padding-top:16px;border-top:1px solid #f3f4f6">
+        <button type="button" onclick="closeCreatorModal()"
+                style="padding:9px 20px;border:1px solid #d1d5db;border-radius:6px;background:#fff;cursor:pointer;font-size:14px;color:#374151;font-weight:500">Cancel</button>
+        <button type="submit"
+                style="padding:9px 20px;border:none;border-radius:6px;background:#2563eb;color:#fff;cursor:pointer;font-size:14px;font-weight:600">Save Creator</button>
+      </div>
+    </form>
+  </div>
+</div>
 
 <!-- ── Scripts ─────────────────────────────────────── -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
