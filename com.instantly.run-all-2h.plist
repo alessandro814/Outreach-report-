@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.instantly.run-all-2h</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/zsh</string>
+        <string>-l</string>
+        <string>/Users/alessandropassariello/instantly-analyzer/run_all.sh</string>
+    </array>
+
+    <!-- Run every 2 hours (7200 seconds) -->
+    <key>StartInterval</key>
+    <integer>7200</integer>
+
+    <!-- Logs -->
+    <key>StandardOutPath</key>
+    <string>/Users/alessandropassariello/instantly-analyzer/logs/run_all.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/alessandropassariello/instantly-analyzer/logs/run_all_error.log</string>
+
+    <!-- Environment -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>/Users/alessandropassariello</string>
+        <key>INSTANTLY_API_KEY</key>
+        <string>M2Q2NGMxOWYtYTc3ZS00NDQyLWFmMTEtYTNjNjNmYzUyNTViOmdhWEJDeVJ1ZlNhbw==</string>
+        <key>ANTHROPIC_API_KEY</key>
+        <string>YOUR_ANTHROPIC_API_KEY_HERE</string>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <key>GSHEETS_SHEET_ID</key>
+        <string></string>
+    </dict>
+
+    <!-- Don't run immediately on load — wait for the first 2h interval -->
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>
