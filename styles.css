@@ -1367,3 +1367,61 @@ tbody td { padding: 9px 11px; vertical-align: middle; color: #374151; }
 .today-no .today-val      { color: #ef4444; }
 .today-camps   { border-left: 4px solid #f59e0b; }
 .today-camps .today-val   { color: #f59e0b; }
+
+/* ═══════════════════════════════════════════════════
+   CAMPAIGN CLOSED REPORT
+═══════════════════════════════════════════════════ */
+
+.two-col-charts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 0;
+}
+@media (max-width: 900px) {
+  .two-col-charts { grid-template-columns: 1fr; }
+}
+
+/* Expand icon in row */
+.cr-expand-icon {
+  display: inline-block;
+  width: 14px;
+  font-size: 10px;
+  color: #9ca3af;
+  margin-right: 4px;
+  transition: transform 0.15s;
+}
+
+/* Clickable campaign row */
+.cr-row:hover { background: #f0f9ff !important; }
+.cr-row-expanded > td:first-child .cr-expand-icon { color: #2563eb; }
+
+/* Expanded sub-rows */
+.cr-expanded-row td {
+  background: #f8fafc;
+  font-size: 12px;
+  border-bottom: 1px solid #e5e7eb;
+}
+.cr-group-header td {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.cr-lead-row td { background: #fafafa; }
+.cr-lead-row:hover td { background: #f0f9ff; }
+
+/* Tag count chips */
+.cr-tag-count {
+  display: inline-block;
+  min-width: 22px;
+  text-align: center;
+  border-radius: 10px;
+  padding: 1px 8px;
+  font-size: 12px;
+  font-weight: 700;
+}
+.cr-closed    { background: #d1fae5; color: #059669; }
+.cr-free-aff  { background: #dbeafe; color: #2563eb; }
+.cr-said-no   { background: #fee2e2; color: #dc2626; }
+.cr-lost      { background: #f3f4f6; color: #6b7280; }
+.cr-waiting   { background: #fef3c7; color: #d97706; }

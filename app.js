@@ -70,6 +70,14 @@ let chartDonut    = null;
 let chartTopCamps = null;
 let chartStacked  = null;
 
+// ── Campaign Closed Report state ───────────────────────────────────────────
+let closedSort   = { col: 'total_replied', dir: 'desc' };
+let closedSearch = '';
+let closedExpandedCamp = null;
+let chartCRClosed = null;
+let chartCRFreeAff = null;
+let chartCRVsReplied = null;
+
 /* ═══════════════════════════════════════════════════
    INIT
 ═══════════════════════════════════════════════════ */
@@ -233,6 +241,7 @@ function setupTabs() {
       if (btn.dataset.target === 'page-campaigns') renderStackedChart();
       if (btn.dataset.target === 'page-ai') checkAIStatus();
       if (btn.dataset.target === 'page-leadstatus') renderTagStatus();
+      if (btn.dataset.target === 'page-closed-report') renderClosedReport();
     });
   });
 }
@@ -1813,6 +1822,9 @@ function refreshTagUI() {
   document.querySelectorAll('.tag-select').forEach(sel => {
     styleTagSelect(sel, sel.value);
   });
+  // Refresh closed report if it is the active tab
+  const activePage = document.querySelector('.page.active');
+  if (activePage && activePage.id === 'page-closed-report') renderClosedReport();
 }
 
 function renderTagCounts() {
@@ -2494,4 +2506,317 @@ function toggleDebugPanel() {
   body.style.display = visible ? 'none' : '';
   btn.textContent    = visible ? 'Show Debug' : 'Hide Debug';
   if (!visible) updateDebugPanel();
+}
+
+/* ═══════════════════════════════════════════════════
+   CAMPAIGN CLOSED REPORT
+═══════════════════════════════════════════════════ */
+
+function buildClosedReport() {
+  // 1. Compute Instantly reply metrics per campaign from all leads (all-time)
+  const instMap = {};
+  D.leads.forEach(l => {
+    const name = l.campaign_name;
+    if (!name) return;
+    if (!instMap[name]) {
+      instMap[name] = { campaign_name: name, total_replied: 0, yes: 0, interested: 0, no: 0, not_interested: 0, auto_reply: 0 };
+    }
+    const c = instMap[name];
+    c.total_replied++;
+    const cls = l.classification;
+    if      (cls === 'YES')            c.yes++;
+    else if (cls === 'INTERESTED')     c.interested++;
+    else if (cls === 'NO')             c.no++;
+    else if (cls === 'NOT_INTERESTED') c.not_interested++;
+    else if (cls === 'AUTO_REPLY')     c.auto_reply++;
+  });
+
+  // 2. Count tags per campaign from Supabase tagsMap
+  //    Manual creators without a campaign_name are excluded
+  const tagCampMap = {};
+  Object.values(tagsMap).forEach(t => {
+    const name = t.campaign_name;
+    if (!name) return;
+    if (!tagCampMap[name]) {
+      tagCampMap[name] = { closed_count: 0, free_affiliate_count: 0, said_no_status_count: 0, lost_count: 0, waiting_for_rates_count: 0 };
+    }
+    const c = tagCampMap[name];
+    if      (t.assigned_tag === 'Closed')            c.closed_count++;
+    else if (t.assigned_tag === 'Free Affiliate')    c.free_affiliate_count++;
+    else if (t.assigned_tag === 'Said NO')           c.said_no_status_count++;
+    else if (t.assigned_tag === 'LOST')              c.lost_count++;
+    else if (t.assigned_tag === 'Waiting for rates') c.waiting_for_rates_count++;
+  });
+
+  // 3. Union of all campaign names (Instantly-only OR tag-only are both included)
+  const allCamps = new Set([...Object.keys(instMap), ...Object.keys(tagCampMap)]);
+  const rows = [];
+  allCamps.forEach(name => {
+    const inst = instMap[name] || { total_replied: 0, yes: 0, interested: 0, no: 0, not_interested: 0, auto_reply: 0 };
+    const tags = tagCampMap[name] || { closed_count: 0, free_affiliate_count: 0, said_no_status_count: 0, lost_count: 0, waiting_for_rates_count: 0 };
+    const pos = inst.yes + inst.interested;
+    const neg = inst.no + inst.not_interested;
+    const tot = inst.total_replied;
+    rows.push({
+      campaign_name:                  name,
+      total_replied:                  tot,
+      yes:                            inst.yes,
+      interested:                     inst.interested,
+      no:                             inst.no,
+      not_interested:                 inst.not_interested,
+      auto_reply:                     inst.auto_reply,
+      positive_total:                 pos,
+      positive_rate:                  tot > 0 ? +(pos / tot * 100).toFixed(1) : 0,
+      negative_rate:                  tot > 0 ? +(neg / tot * 100).toFixed(1) : 0,
+      no_reply_rate:                  tot > 0 ? +(inst.no / tot * 100).toFixed(1) : 0,
+      closed_count:                   tags.closed_count,
+      free_affiliate_count:           tags.free_affiliate_count,
+      said_no_status_count:           tags.said_no_status_count,
+      lost_count:                     tags.lost_count,
+      waiting_for_rates_count:        tags.waiting_for_rates_count,
+      closed_rate_vs_replied:         tot > 0 ? +(tags.closed_count / tot * 100).toFixed(1) : 0,
+      free_affiliate_rate_vs_replied: tot > 0 ? +(tags.free_affiliate_count / tot * 100).toFixed(1) : 0,
+      lost_rate_vs_replied:           tot > 0 ? +(tags.lost_count / tot * 100).toFixed(1) : 0,
+    });
+  });
+  return rows;
+}
+
+function renderClosedReport() {
+  const rows = buildClosedReport();
+  renderClosedReportSummary(rows);
+  renderClosedReportTable(rows);
+  renderClosedReportCharts(rows);
+  setupClosedReportSort();
+  setupClosedReportSearch();
+}
+
+function renderClosedReportSummary(rows) {
+  set('cr-total-camps',    rows.length);
+  set('cr-total-closed',   rows.reduce((s, r) => s + r.closed_count, 0));
+  set('cr-total-free-aff', rows.reduce((s, r) => s + r.free_affiliate_count, 0));
+  set('cr-total-said-no',  rows.reduce((s, r) => s + r.said_no_status_count, 0));
+  set('cr-total-lost',     rows.reduce((s, r) => s + r.lost_count, 0));
+  set('cr-total-waiting',  rows.reduce((s, r) => s + r.waiting_for_rates_count, 0));
+}
+
+function renderClosedReportTable(allRows) {
+  const search = closedSearch.toLowerCase();
+  let rows = allRows.filter(r => !search || r.campaign_name.toLowerCase().includes(search));
+
+  const { col, dir } = closedSort;
+  rows = rows.sort((a, b) => {
+    const av = typeof a[col] === 'string' ? a[col].toLowerCase() : (a[col] ?? 0);
+    const bv = typeof b[col] === 'string' ? b[col].toLowerCase() : (b[col] ?? 0);
+    return dir === 'asc' ? (av > bv ? 1 : -1) : (av < bv ? 1 : -1);
+  });
+
+  // Update sort indicators
+  const thead = document.querySelector('#crTable thead tr');
+  if (thead) {
+    thead.querySelectorAll('th[data-crcol]').forEach(th => {
+      th.classList.remove('sort-asc', 'sort-desc');
+      if (th.dataset.crcol === col) th.classList.add(dir === 'asc' ? 'sort-asc' : 'sort-desc');
+    });
+  }
+
+  const tbody = document.querySelector('#crTable tbody');
+  if (!tbody) return;
+
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="19" style="text-align:center;color:#9ca3af;padding:36px">No campaign data found.</td></tr>';
+    return;
+  }
+
+  const pct = v => v > 0
+    ? `<span style="color:#059669;font-weight:600">${v}%</span>`
+    : '<span style="color:#d1d5db">—</span>';
+
+  tbody.innerHTML = rows.map(r => {
+    const isExp = closedExpandedCamp === r.campaign_name;
+    const mainRow = `
+      <tr class="cr-row${isExp ? ' cr-row-expanded' : ''}" data-camp="${esc(r.campaign_name)}">
+        <td style="padding-left:8px;white-space:nowrap">
+          <span class="cr-expand-icon">${isExp ? '▼' : '▶'}</span><span class="camp-name">${esc(r.campaign_name)}</span>
+        </td>
+        <td style="font-weight:600">${r.total_replied}</td>
+        <td>${r.yes > 0 ? `<span class="badge badge-YES">${r.yes}</span>` : '—'}</td>
+        <td>${r.interested > 0 ? `<span class="badge badge-INTERESTED">${r.interested}</span>` : '—'}</td>
+        <td>${r.no > 0 ? `<span class="badge badge-NO">${r.no}</span>` : '—'}</td>
+        <td>${r.not_interested > 0 ? `<span class="badge badge-NOT_INTERESTED">${r.not_interested}</span>` : '—'}</td>
+        <td>${r.auto_reply > 0 ? `<span class="badge badge-AUTO_REPLY">${r.auto_reply}</span>` : '—'}</td>
+        <td style="font-weight:700">${r.positive_total}</td>
+        <td>${r.positive_rate}%</td>
+        <td>${r.negative_rate}%</td>
+        <td>${r.no_reply_rate}%</td>
+        <td style="border-left:2px solid #e5e7eb"><span class="cr-tag-count cr-closed">${r.closed_count}</span></td>
+        <td><span class="cr-tag-count cr-free-aff">${r.free_affiliate_count}</span></td>
+        <td><span class="cr-tag-count cr-said-no">${r.said_no_status_count}</span></td>
+        <td><span class="cr-tag-count cr-lost">${r.lost_count}</span></td>
+        <td><span class="cr-tag-count cr-waiting">${r.waiting_for_rates_count}</span></td>
+        <td style="border-left:2px solid #e5e7eb">${pct(r.closed_rate_vs_replied)}</td>
+        <td>${pct(r.free_affiliate_rate_vs_replied)}</td>
+        <td>${pct(r.lost_rate_vs_replied)}</td>
+      </tr>`;
+    const expandRows = isExp ? buildClosedReportExpandedRows(r.campaign_name) : '';
+    return mainRow + expandRows;
+  }).join('');
+
+  // Attach click handler via event delegation (avoids escaping issues in onclick="")
+  tbody.onclick = e => {
+    const row = e.target.closest('.cr-row');
+    if (!row) return;
+    const camp = row.dataset.camp;
+    if (!camp) return;
+    closedExpandedCamp = closedExpandedCamp === camp ? null : camp;
+    renderClosedReportTable(buildClosedReport());
+  };
+}
+
+function buildClosedReportExpandedRows(campaignName) {
+  const STATUS_ORDER = ['Closed', 'Free Affiliate', 'Said NO', 'LOST', 'Waiting for rates'];
+
+  const taggedLeads = Object.values(tagsMap).filter(t =>
+    t.campaign_name === campaignName && t.assigned_tag
+  );
+
+  if (!taggedLeads.length) {
+    return `<tr class="cr-expanded-row"><td colspan="19" style="padding:12px 32px;background:#f9fafb;color:#9ca3af;font-style:italic">No tagged leads for this campaign yet.</td></tr>`;
+  }
+
+  const byTag = {};
+  STATUS_ORDER.forEach(tag => { byTag[tag] = []; });
+  taggedLeads.forEach(t => {
+    if (byTag[t.assigned_tag]) byTag[t.assigned_tag].push(t);
+  });
+
+  const rows = [];
+  STATUS_ORDER.forEach(tag => {
+    const leads = byTag[tag];
+    if (!leads.length) return;
+    const cfg = TAGS[tag] || {};
+
+    rows.push(`<tr class="cr-expanded-row cr-group-header">
+      <td colspan="19" style="background:${cfg.bg || '#f9fafb'};color:${cfg.color || '#374151'};font-weight:700;padding:5px 20px 5px 30px;font-size:12px;letter-spacing:0.02em">
+        ${esc(tag)} &nbsp;<span style="font-weight:400;opacity:0.75">(${leads.length} lead${leads.length !== 1 ? 's' : ''})</span>
+      </td>
+    </tr>`);
+
+    leads.forEach(t => {
+      const lead    = D.leads.find(l => l.email === t.email) || {};
+      const isSynth = (t.email || '').startsWith('__manual__');
+      const dispEmail = isSynth ? '—' : esc(t.email || '—');
+      const handle  = t.creator_handle ? `<span class="handle-tag">@${esc(t.creator_handle)}</span>` : '<span style="color:#d1d5db">—</span>';
+      const classBadge = lead.classification
+        ? `<span class="badge badge-${lead.classification}">${lead.classification.replace(/_/g,' ')}</span>`
+        : '<span style="color:#d1d5db">—</span>';
+      const tagBadge = `<span class="lead-tag-badge" style="background:${cfg.bg||'#f3f4f6'};color:${cfg.color||'#374151'};border:1px solid ${cfg.color||'#e5e7eb'};border-radius:4px;padding:2px 8px;font-size:11px;font-weight:600">${esc(tag)}</span>`;
+      const summary = lead.clean_reply_summary || (lead.reply_text || '').slice(0, 140) || '';
+
+      rows.push(`<tr class="cr-expanded-row cr-lead-row">
+        <td style="padding-left:30px">${handle}</td>
+        <td colspan="2" style="font-size:12px;color:#374151">${dispEmail}</td>
+        <td colspan="2">${classBadge}</td>
+        <td colspan="2">${tagBadge}</td>
+        <td colspan="3" style="font-size:12px;color:#6b7280;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(t.notes || '')}">${esc(t.notes || '—')}</td>
+        <td colspan="3" style="font-size:12px;color:#6b7280;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(lead.reason || '')}">${esc(lead.reason || '—')}</td>
+        <td colspan="6" style="font-size:12px;color:#374151;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(lead.clean_reply_summary || '')}">${esc(summary) || '<span style="color:#d1d5db">—</span>'}</td>
+      </tr>`);
+    });
+  });
+
+  return rows.join('');
+}
+
+function renderClosedReportCharts(rows) {
+  const topClosed = [...rows].sort((a, b) => b.closed_count - a.closed_count).filter(r => r.closed_count > 0).slice(0, 15);
+  const topFree   = [...rows].sort((a, b) => b.free_affiliate_count - a.free_affiliate_count).filter(r => r.free_affiliate_count > 0).slice(0, 15);
+  const topVs     = [...rows].filter(r => r.total_replied > 0).sort((a, b) => b.closed_count - a.closed_count).slice(0, 15);
+
+  // Chart 1: Top by Closed
+  if (chartCRClosed) { chartCRClosed.destroy(); chartCRClosed = null; }
+  const ctx1 = document.getElementById('chartCRClosed');
+  if (ctx1 && topClosed.length) {
+    chartCRClosed = new Chart(ctx1.getContext('2d'), {
+      type: 'bar',
+      data: { labels: topClosed.map(r => r.campaign_name), datasets: [{ label: 'Closed', data: topClosed.map(r => r.closed_count), backgroundColor: '#059669', borderRadius: 4 }] },
+      options: { responsive: true, maintainAspectRatio: false, indexAxis: 'y', plugins: { legend: { display: false } }, scales: { x: { grid: { color: '#f3f4f6' }, ticks: { font: { size: 11 } } }, y: { ticks: { font: { size: 11 } } } } },
+    });
+  } else if (ctx1) {
+    ctx1.getContext('2d').clearRect(0, 0, ctx1.width, ctx1.height);
+  }
+
+  // Chart 2: Top by Free Affiliate
+  if (chartCRFreeAff) { chartCRFreeAff.destroy(); chartCRFreeAff = null; }
+  const ctx2 = document.getElementById('chartCRFreeAff');
+  if (ctx2 && topFree.length) {
+    chartCRFreeAff = new Chart(ctx2.getContext('2d'), {
+      type: 'bar',
+      data: { labels: topFree.map(r => r.campaign_name), datasets: [{ label: 'Free Affiliate', data: topFree.map(r => r.free_affiliate_count), backgroundColor: '#2563eb', borderRadius: 4 }] },
+      options: { responsive: true, maintainAspectRatio: false, indexAxis: 'y', plugins: { legend: { display: false } }, scales: { x: { grid: { color: '#f3f4f6' }, ticks: { font: { size: 11 } } }, y: { ticks: { font: { size: 11 } } } } },
+    });
+  } else if (ctx2) {
+    ctx2.getContext('2d').clearRect(0, 0, ctx2.width, ctx2.height);
+  }
+
+  // Chart 3: Closed vs Replied
+  if (chartCRVsReplied) { chartCRVsReplied.destroy(); chartCRVsReplied = null; }
+  const ctx3 = document.getElementById('chartCRVsReplied');
+  if (ctx3 && topVs.length) {
+    chartCRVsReplied = new Chart(ctx3.getContext('2d'), {
+      type: 'bar',
+      data: {
+        labels: topVs.map(r => r.campaign_name),
+        datasets: [
+          { label: 'Total Replied', data: topVs.map(r => r.total_replied), backgroundColor: '#e0e7ff', borderRadius: 4 },
+          { label: 'Closed',        data: topVs.map(r => r.closed_count),  backgroundColor: '#059669', borderRadius: 4 },
+        ],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false, indexAxis: 'y',
+        scales: { x: { grid: { color: '#f3f4f6' }, ticks: { font: { size: 11 } } }, y: { ticks: { font: { size: 11 } } } },
+        plugins: { legend: { position: 'bottom', labels: { boxWidth: 11, padding: 12, font: { size: 11 } } } },
+      },
+    });
+  }
+}
+
+function setupClosedReportSort() {
+  const thead = document.querySelector('#crTable thead tr');
+  if (!thead || thead._crSortBound) return;
+  thead._crSortBound = true;
+  thead.querySelectorAll('th[data-crcol]').forEach(th => {
+    th.addEventListener('click', () => {
+      const col = th.dataset.crcol;
+      closedSort.dir = closedSort.col === col && closedSort.dir === 'asc' ? 'desc' : 'asc';
+      closedSort.col = col;
+      renderClosedReportTable(buildClosedReport());
+    });
+  });
+}
+
+function setupClosedReportSearch() {
+  const inp = document.getElementById('crSearch');
+  if (!inp || inp._crSearchBound) return;
+  inp._crSearchBound = true;
+  inp.addEventListener('input', e => {
+    closedSearch = e.target.value.trim();
+    renderClosedReportTable(buildClosedReport());
+  });
+}
+
+function downloadClosedReportCSV() {
+  const rows = buildClosedReport();
+  const headers = [
+    'campaign_name','total_replied','yes','interested','no','not_interested','auto_reply',
+    'positive_total','positive_rate','negative_rate','no_reply_rate',
+    'closed_count','free_affiliate_count','said_no_status_count','lost_count','waiting_for_rates_count',
+    'closed_rate_vs_replied','free_affiliate_rate_vs_replied','lost_rate_vs_replied',
+  ];
+  const csv = [headers, ...rows.map(r => headers.map(h => `"${String(r[h] ?? '').replace(/"/g, '""')}"`))]
+    .map(r => r.join(',')).join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  a.download = 'campaign_closed_report.csv';
+  a.click();
 }

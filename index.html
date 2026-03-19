@@ -24,6 +24,7 @@
     <li><button data-target="page-lookup">Email Lookup</button></li>
     <li><button data-target="page-leadstatus">Lead Status</button></li>
     <li><button data-target="page-handle-lookup">Handle Lookup</button></li>
+    <li><button data-target="page-closed-report">Campaign Closed Report</button></li>
   </ul>
   <div class="topbar-meta">
     <span id="data-source-badge" class="data-source-badge" title=""></span>
@@ -778,6 +779,98 @@
     </form>
   </div>
 </div>
+
+<!-- ══════════════════════════════════════════════════
+     PAGE: CAMPAIGN CLOSED REPORT
+══════════════════════════════════════════════════ -->
+<div id="page-closed-report" class="page">
+
+  <!-- Summary KPI Cards -->
+  <div class="kpi-grid">
+    <div class="kpi-card" style="border-top:3px solid #6366f1">
+      <div class="kpi-label">Campaigns</div>
+      <div class="kpi-value" id="cr-total-camps">—</div>
+    </div>
+    <div class="kpi-card" style="border-top:3px solid #059669">
+      <div class="kpi-label">Total Closed</div>
+      <div class="kpi-value" id="cr-total-closed">—</div>
+    </div>
+    <div class="kpi-card" style="border-top:3px solid #2563eb">
+      <div class="kpi-label">Free Affiliates</div>
+      <div class="kpi-value" id="cr-total-free-aff">—</div>
+    </div>
+    <div class="kpi-card" style="border-top:3px solid #dc2626">
+      <div class="kpi-label">Said NO</div>
+      <div class="kpi-value" id="cr-total-said-no">—</div>
+    </div>
+    <div class="kpi-card" style="border-top:3px solid #6b7280">
+      <div class="kpi-label">LOST</div>
+      <div class="kpi-value" id="cr-total-lost">—</div>
+    </div>
+    <div class="kpi-card" style="border-top:3px solid #d97706">
+      <div class="kpi-label">Waiting for Rates</div>
+      <div class="kpi-value" id="cr-total-waiting">—</div>
+    </div>
+  </div>
+
+  <!-- Table -->
+  <div class="section-card">
+    <div class="section-header">
+      <h3>Campaign Closed Report <span class="hint">— click a row to expand leads · click headers to sort</span></h3>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input type="text" id="crSearch" class="search-main" placeholder="Search campaign…" style="width:220px">
+        <button class="btn-download" onclick="downloadClosedReportCSV()">⬇ Download CSV</button>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table id="crTable">
+        <thead>
+          <tr>
+            <th data-crcol="campaign_name">Campaign</th>
+            <th data-crcol="total_replied">Replied</th>
+            <th data-crcol="yes">YES</th>
+            <th data-crcol="interested">Interested</th>
+            <th data-crcol="no">NO</th>
+            <th data-crcol="not_interested">Not Int.</th>
+            <th data-crcol="auto_reply">Auto</th>
+            <th data-crcol="positive_total">Positive</th>
+            <th data-crcol="positive_rate">Pos %</th>
+            <th data-crcol="negative_rate">Neg %</th>
+            <th data-crcol="no_reply_rate">NO %</th>
+            <th data-crcol="closed_count" style="border-left:2px solid #e5e7eb">Closed</th>
+            <th data-crcol="free_affiliate_count">Free Aff.</th>
+            <th data-crcol="said_no_status_count">Said NO</th>
+            <th data-crcol="lost_count">LOST</th>
+            <th data-crcol="waiting_for_rates_count">Waiting</th>
+            <th data-crcol="closed_rate_vs_replied" style="border-left:2px solid #e5e7eb">Closed %</th>
+            <th data-crcol="free_affiliate_rate_vs_replied">Free Aff %</th>
+            <th data-crcol="lost_rate_vs_replied">Lost %</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Charts -->
+  <div class="two-col-charts">
+    <div class="section-card">
+      <h3>Top Campaigns by Closed</h3>
+      <div style="height:320px"><canvas id="chartCRClosed"></canvas></div>
+    </div>
+    <div class="section-card">
+      <h3>Top Campaigns by Free Affiliate</h3>
+      <div style="height:320px"><canvas id="chartCRFreeAff"></canvas></div>
+    </div>
+  </div>
+
+  <div class="section-card">
+    <h3>Closed vs Replied by Campaign</h3>
+    <div style="height:360px"><canvas id="chartCRVsReplied"></canvas></div>
+  </div>
+
+</div><!-- /page-closed-report -->
+
 
 <!-- ── Scripts ─────────────────────────────────────── -->
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
