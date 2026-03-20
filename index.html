@@ -879,16 +879,26 @@
   <div class="page-header">
     <h2>Discord Sent Summary</h2>
     <p class="page-subtitle">
-      Emails sent via Discord (CSV rows 408+) matched against the full Instantly all-time dataset.
-      <strong id="ds-meta-line">Loading…</strong>
+      Source: <code>Discord handle</code> column, CSV rows 408+ (spreadsheet-style). Only rows where that cell is a valid email address.
+      Matched against the full all-time Instantly dataset (<strong id="ds-instantly-count">…</strong> leads).
     </p>
+  </div>
+
+  <!-- Debug panel -->
+  <div id="ds-debug" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:14px 20px;font-size:13px;color:#374151;margin-bottom:20px;line-height:1.9">
+    <strong>Debug counts:</strong>
+    <span id="ds-debug-text">Loading…</span>
   </div>
 
   <!-- KPI Cards -->
   <div class="kpi-grid">
     <div class="kpi-card" style="border-top:3px solid #2563eb">
-      <div class="kpi-label">Total Emails Sent</div>
+      <div class="kpi-label">Valid Emails (row 408+)</div>
       <div class="kpi-value" id="ds-kpi-total">—</div>
+    </div>
+    <div class="kpi-card" style="border-top:3px solid #7c3aed">
+      <div class="kpi-label">Sent via Instantly</div>
+      <div class="kpi-value" id="ds-kpi-sent">—</div>
     </div>
     <div class="kpi-card" style="border-top:3px solid #059669">
       <div class="kpi-label">Responded</div>
@@ -898,21 +908,26 @@
       <div class="kpi-label">Not Responded</div>
       <div class="kpi-value" id="ds-kpi-not-responded">—</div>
     </div>
-    <div class="kpi-card" style="border-top:3px solid #d97706">
-      <div class="kpi-label">Response Rate</div>
-      <div class="kpi-value" id="ds-kpi-rate">—</div>
+    <div class="kpi-card" style="border-top:3px solid #6b7280">
+      <div class="kpi-label">Not in Instantly</div>
+      <div class="kpi-value" id="ds-kpi-not-sent">—</div>
     </div>
   </div>
 
-  <!-- Filters + Search -->
+  <!-- Full list with filters -->
   <div class="section-card">
     <div class="section-header">
-      <h3>Discord Sent — Full List <span class="hint">— matched against all-time Instantly data</span></h3>
+      <h3>Full List <span class="hint">— all 160 valid Discord email rows · strict email match · never filtered by date</span></h3>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
         <input type="text" id="ds-search-email"  placeholder="Search by email…"  style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;width:170px">
-        <input type="text" id="ds-search-handle" placeholder="Search by TikTok handle…" style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;width:180px">
+        <input type="text" id="ds-search-handle" placeholder="Search by TikTok handle…" style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;width:190px">
+        <select id="ds-filter-sent" style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px">
+          <option value="">All (sent/not sent)</option>
+          <option value="yes">Sent via Instantly</option>
+          <option value="no">Not in Instantly</option>
+        </select>
         <select id="ds-filter-responded" style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px">
-          <option value="">All</option>
+          <option value="">All (responded/not)</option>
           <option value="yes">Responded</option>
           <option value="no">Not Responded</option>
         </select>
@@ -930,13 +945,13 @@
         <button class="btn-download" onclick="downloadDiscordSummaryCSV()">⬇ Download CSV</button>
       </div>
     </div>
-
     <div class="table-wrap">
       <table id="dsTable">
         <thead>
           <tr>
             <th>TikTok Handle</th>
             <th>Discord Email</th>
+            <th>Sent via Instantly</th>
             <th>Responded</th>
             <th>Classification</th>
             <th>Campaign</th>
@@ -951,27 +966,69 @@
     </div>
   </div>
 
-  <!-- Not Responded Section -->
+  <!-- Sub-table 1: Sent + Responded -->
   <div class="section-card" style="margin-top:24px">
     <div class="section-header">
-      <h3>Not Responded List <span class="hint">— leads from Discord CSV (row 408+) with no Instantly reply</span></h3>
-      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-        <input type="text" id="ds-nr-search" placeholder="Search…" style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;width:200px">
-        <button class="btn-download" onclick="downloadDiscordNotRespondedCSV()">⬇ Download CSV</button>
-      </div>
+      <h3>✅ Sent via Instantly + Responded <span class="hint" id="ds-s1-hint"></span></h3>
+      <button class="btn-download" onclick="downloadDiscordSubCSV('responded')">⬇ Download CSV</button>
     </div>
     <div class="table-wrap">
-      <table id="dsNrTable">
+      <table id="ds-t1">
         <thead>
           <tr>
             <th>TikTok Handle</th>
             <th>Discord Email</th>
-            <th>Campaign (if known)</th>
-            <th>Assigned Tag</th>
-            <th>Notes</th>
+            <th>Classification</th>
+            <th>Campaign</th>
+            <th>Creator Handle</th>
+            <th>Reason</th>
+            <th>Reply Summary</th>
           </tr>
         </thead>
-        <tbody id="ds-nr-tbody"></tbody>
+        <tbody id="ds-t1-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Sub-table 2: Sent + Not Responded -->
+  <div class="section-card" style="margin-top:24px">
+    <div class="section-header">
+      <h3>⏳ Sent via Instantly + Not Responded <span class="hint" id="ds-s2-hint"></span></h3>
+      <button class="btn-download" onclick="downloadDiscordSubCSV('sent-not-responded')">⬇ Download CSV</button>
+    </div>
+    <div id="ds-s2-note" style="font-size:13px;color:#6b7280;padding:10px 0 6px 0;display:none"></div>
+    <div class="table-wrap">
+      <table id="ds-t2">
+        <thead>
+          <tr>
+            <th>TikTok Handle</th>
+            <th>Discord Email</th>
+            <th>Campaign</th>
+            <th>Notes (CSV)</th>
+          </tr>
+        </thead>
+        <tbody id="ds-t2-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Sub-table 3: Not Sent via Instantly -->
+  <div class="section-card" style="margin-top:24px">
+    <div class="section-header">
+      <h3>❌ Not Found in Instantly <span class="hint" id="ds-s3-hint"></span></h3>
+      <button class="btn-download" onclick="downloadDiscordSubCSV('not-sent')">⬇ Download CSV</button>
+    </div>
+    <div class="table-wrap">
+      <table id="ds-t3">
+        <thead>
+          <tr>
+            <th>TikTok Handle</th>
+            <th>Discord Email</th>
+            <th>Assigned Tag</th>
+            <th>Notes (CSV)</th>
+          </tr>
+        </thead>
+        <tbody id="ds-t3-tbody"></tbody>
       </table>
     </div>
   </div>

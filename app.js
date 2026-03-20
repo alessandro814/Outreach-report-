@@ -2824,13 +2824,37 @@ function downloadClosedReportCSV() {
 
 /* ═══════════════════════════════════════════════════
    DISCORD SENT SUMMARY
+   Source: "Discord handle" column, CSV rows 408+ (spreadsheet row 408 = array index 407).
+   Only rows where that cell is a valid email address (160 rows).
+   Matching: strict email equality, lowercase + trimmed, never filtered by date.
+
+   sent_via_instantly = Yes  →  email found in D.leads (all-time, full dataset)
+   sent_via_instantly = No   →  email NOT found in D.leads
+
+   responded = Yes  →  email found in D.leads (all leads in D.leads have a classification
+                        because D.leads is built from is_inbound=true Instantly replies only)
+   responded = No   →  email NOT found in D.leads (or AUTO_REPLY only)
+
+   Note: D.leads contains only classified/replied leads (is_inbound=true from Instantly API).
+   Therefore: sent_via_instantly=Yes always implies responded=Yes for the current dataset.
+   The "sent but not responded" bucket exists in the UI but will be empty unless AUTO_REPLY
+   is treated as non-response (see _isRealResponse below).
 ═══════════════════════════════════════════════════ */
 
-// Build the matched dataset once per render call
+// AUTO_REPLY is a system response, not a human response — treat as "not responded"
+function _isRealResponse(classification) {
+  return classification === 'YES' ||
+         classification === 'INTERESTED' ||
+         classification === 'NO' ||
+         classification === 'NOT_INTERESTED';
+}
+
+// Build matched rows. Uses ONLY discord_handle_email (never infers from other columns).
 function buildDiscordRows() {
   if (typeof DISCORD_SENT_DATA === 'undefined') return [];
 
-  // Build a fast lookup: email → array of lead records (full all-time, never filtered)
+  // Build lookup: email (lowercase+trimmed) → array of lead records
+  // Uses full D.leads — never date-filtered
   const leadsByEmail = {};
   D.leads.forEach(l => {
     const key = l.email.trim().toLowerCase();
@@ -2838,44 +2862,51 @@ function buildDiscordRows() {
     leadsByEmail[key].push(l);
   });
 
-  // Also check config-tracked creators by email
+  // Config-tracked creators for assigned_tag display info only
   const taggedByEmail = {};
   if (typeof CONFIG_DATA !== 'undefined' && Array.isArray(CONFIG_DATA.creators)) {
     CONFIG_DATA.creators.forEach(c => {
-      if (c.email) {
-        const key = c.email.trim().toLowerCase();
-        taggedByEmail[key] = c;
-      }
+      if (c.email) taggedByEmail[c.email.trim().toLowerCase()] = c;
     });
   }
 
   return DISCORD_SENT_DATA.map(row => {
-    const email = row.discord_handle_email;
-    const matches = leadsByEmail[email] || [];
-    const responded = matches.length > 0;
+    // ONLY use discord_handle_email as the contact key
+    const email = row.discord_handle_email; // already lowercased + trimmed in discord_data.js
 
-    // Pick best lead record (prefer YES/INTERESTED)
-    let best = matches[0];
-    if (matches.length > 1) {
-      const priority = ['YES','INTERESTED','NO','NOT_INTERESTED','AUTO_REPLY'];
-      best = matches.slice().sort((a,b) =>
-        (priority.indexOf(a.classification) + 1 || 99) - (priority.indexOf(b.classification) + 1 || 99)
-      )[0];
+    const matches = leadsByEmail[email] || [];
+    const sent_via_instantly = matches.length > 0;
+
+    // Pick best lead record: prefer YES > INTERESTED > NO > NOT_INTERESTED > AUTO_REPLY
+    const priority = ['YES','INTERESTED','NO','NOT_INTERESTED','AUTO_REPLY'];
+    let best = null;
+    if (matches.length === 1) {
+      best = matches[0];
+    } else if (matches.length > 1) {
+      best = matches.slice().sort((a, b) => {
+        const ai = priority.indexOf(a.classification);
+        const bi = priority.indexOf(b.classification);
+        return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi);
+      })[0];
     }
+
+    // responded = Yes only if email is in D.leads AND has a real human classification
+    // AUTO_REPLY = sent_via_instantly=Yes but responded=No
+    const responded = sent_via_instantly && _isRealResponse(best ? best.classification : '');
 
     const tagged = taggedByEmail[email];
 
     return {
       tiktok_handle:        row.tiktok_handle,
       discord_handle_email: email,
-      responded:            responded,
+      sent_via_instantly:   sent_via_instantly,   // bool
+      responded:            responded,             // bool
       classification:       best ? (best.classification || '') : '',
       campaign_name:        best ? (best.campaign_name || '') : '',
       creator_handle:       best ? (best.creator_handle || '') : '',
       reason:               best ? (best.reason || '') : '',
       clean_reply_summary:  best ? (best.clean_reply_summary || '') : '',
       anto_notes:           row.anto_notes,
-      status:               row.status,
       notes:                row.notes,
       assigned_tag:         tagged ? (tagged.tag || '') : '',
     };
@@ -2886,33 +2917,48 @@ let _discordRows = null;
 
 function renderDiscordSummary() {
   _discordRows = buildDiscordRows();
-  _renderDiscordKPIs(_discordRows);
+
+  // Debug counts
+  const total      = _discordRows.length;
+  const sentYes    = _discordRows.filter(r => r.sent_via_instantly).length;
+  const responded  = _discordRows.filter(r => r.responded).length;
+  const sentNoResp = _discordRows.filter(r => r.sent_via_instantly && !r.responded).length;
+  const notSent    = _discordRows.filter(r => !r.sent_via_instantly).length;
+
+  const debugEl = document.getElementById('ds-debug-text');
+  if (debugEl) {
+    debugEl.innerHTML =
+      `Rows from CSV row 408+: <b>${total}</b> valid email rows &nbsp;|&nbsp; ` +
+      `Matched in Instantly: <b>${sentYes}</b> &nbsp;|&nbsp; ` +
+      `Responded (human reply): <b>${responded}</b> &nbsp;|&nbsp; ` +
+      `Sent + Not Responded (AUTO_REPLY or none): <b>${sentNoResp}</b> &nbsp;|&nbsp; ` +
+      `Not found in Instantly: <b>${notSent}</b> &nbsp;|&nbsp; ` +
+      `Instantly dataset size: <b>${D.leads.length.toLocaleString()}</b> all-time leads`;
+  }
+
+  const icEl = document.getElementById('ds-instantly-count');
+  if (icEl) icEl.textContent = D.leads.length.toLocaleString();
+
+  _renderDiscordKPIs(total, sentYes, responded, notSent);
   _populateDiscordCampaignFilter(_discordRows);
   _renderDiscordTable();
-  _renderDiscordNotResponded();
+  _renderDiscordSubTables();
   _setupDiscordListeners();
-
-  const meta = document.getElementById('ds-meta-line');
-  if (meta) meta.textContent =
-    `${_discordRows.length} valid email rows from CSV row 408+, matched against ${D.leads.length.toLocaleString()} all-time Instantly leads.`;
 }
 
-function _renderDiscordKPIs(rows) {
-  const total      = rows.length;
-  const responded  = rows.filter(r => r.responded).length;
-  const notResp    = total - responded;
-  const rate       = total ? ((responded / total) * 100).toFixed(1) + '%' : '—';
-  set('ds-kpi-total',         total);
-  set('ds-kpi-responded',     responded);
-  set('ds-kpi-not-responded', notResp);
-  set('ds-kpi-rate',          rate);
+function _renderDiscordKPIs(total, sentYes, responded, notSent) {
+  const notResponded = total - responded;
+  set('ds-kpi-total',        total);
+  set('ds-kpi-sent',         sentYes);
+  set('ds-kpi-responded',    responded);
+  set('ds-kpi-not-responded',notResponded);
+  set('ds-kpi-not-sent',     notSent);
 }
 
 function _populateDiscordCampaignFilter(rows) {
   const sel = document.getElementById('ds-filter-campaign');
   if (!sel) return;
   const camps = [...new Set(rows.filter(r => r.campaign_name).map(r => r.campaign_name))].sort();
-  // Keep first "All Campaigns" option, rebuild the rest
   while (sel.options.length > 1) sel.remove(1);
   camps.forEach(c => {
     const opt = document.createElement('option');
@@ -2923,25 +2969,34 @@ function _populateDiscordCampaignFilter(rows) {
 
 function _getDiscordFilters() {
   return {
-    email:          (document.getElementById('ds-search-email')?.value || '').trim().toLowerCase(),
+    email:          (document.getElementById('ds-search-email')?.value  || '').trim().toLowerCase(),
     handle:         (document.getElementById('ds-search-handle')?.value || '').trim().toLowerCase(),
-    responded:      document.getElementById('ds-filter-responded')?.value || '',
+    sent:           document.getElementById('ds-filter-sent')?.value           || '',
+    responded:      document.getElementById('ds-filter-responded')?.value      || '',
     classification: document.getElementById('ds-filter-classification')?.value || '',
-    campaign:       document.getElementById('ds-filter-campaign')?.value || '',
+    campaign:       document.getElementById('ds-filter-campaign')?.value       || '',
   };
 }
 
 function _applyDiscordFilters(rows) {
   const f = _getDiscordFilters();
   return rows.filter(r => {
-    if (f.email      && !r.discord_handle_email.includes(f.email)) return false;
-    if (f.handle     && !r.tiktok_handle.toLowerCase().includes(f.handle)) return false;
-    if (f.responded === 'yes' && !r.responded) return false;
-    if (f.responded === 'no'  &&  r.responded) return false;
+    if (f.email  && !r.discord_handle_email.includes(f.email))  return false;
+    if (f.handle && !r.tiktok_handle.toLowerCase().includes(f.handle)) return false;
+    if (f.sent === 'yes' && !r.sent_via_instantly)  return false;
+    if (f.sent === 'no'  &&  r.sent_via_instantly)  return false;
+    if (f.responded === 'yes' && !r.responded)       return false;
+    if (f.responded === 'no'  &&  r.responded)       return false;
     if (f.classification && r.classification !== f.classification) return false;
-    if (f.campaign   && r.campaign_name !== f.campaign) return false;
+    if (f.campaign && r.campaign_name !== f.campaign) return false;
     return true;
   });
+}
+
+function _yesNoBadge(val, yesColor, noColor) {
+  return val
+    ? `<span style="background:${yesColor || '#dcfce7'};color:${yesColor ? '#fff' : '#166534'};padding:2px 8px;border-radius:9999px;font-size:12px;font-weight:600">Yes</span>`
+    : `<span style="background:${noColor  || '#fee2e2'};color:${noColor  ? '#fff' : '#991b1b'};padding:2px 8px;border-radius:9999px;font-size:12px;font-weight:600">No</span>`;
 }
 
 function _classificationBadge(cls) {
@@ -2957,85 +3012,132 @@ function _classificationBadge(cls) {
   return `<span style="${style};padding:2px 8px;border-radius:9999px;font-size:12px;font-weight:600">${esc(cls)}</span>`;
 }
 
+function _tdTrunc(val, maxW) {
+  const v = esc(val);
+  if (!v) return '<span style="color:#9ca3af">—</span>';
+  return `<span style="display:block;max-width:${maxW || 220}px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${v}">${v}</span>`;
+}
+
 function _renderDiscordTable() {
   const tbody = document.getElementById('ds-tbody');
   if (!tbody || !_discordRows) return;
-
   const rows = _applyDiscordFilters(_discordRows);
-
   if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#9ca3af;padding:36px">No results match the current filters.</td></tr>';
+    tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;color:#9ca3af;padding:36px">No results match the current filters.</td></tr>`;
     return;
   }
-
   tbody.innerHTML = rows.map(r => `
     <tr>
-      <td>${esc(r.tiktok_handle) || '<span style="color:#9ca3af">—</span>'}</td>
+      <td style="font-size:12px">${esc(r.tiktok_handle) || '<span style="color:#9ca3af">—</span>'}</td>
       <td style="font-family:monospace;font-size:12px">${esc(r.discord_handle_email)}</td>
-      <td style="text-align:center">
-        ${r.responded
-          ? '<span style="background:#dcfce7;color:#166534;padding:2px 8px;border-radius:9999px;font-size:12px;font-weight:600">Yes</span>'
-          : '<span style="background:#fee2e2;color:#991b1b;padding:2px 8px;border-radius:9999px;font-size:12px;font-weight:600">No</span>'}
-      </td>
+      <td style="text-align:center">${_yesNoBadge(r.sent_via_instantly)}</td>
+      <td style="text-align:center">${_yesNoBadge(r.responded)}</td>
       <td>${_classificationBadge(r.classification)}</td>
       <td style="font-size:12px">${esc(r.campaign_name) || '<span style="color:#9ca3af">—</span>'}</td>
       <td style="font-size:12px">${esc(r.creator_handle) || '<span style="color:#9ca3af">—</span>'}</td>
-      <td style="font-size:12px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(r.reason)}">${esc(r.reason) || '<span style="color:#9ca3af">—</span>'}</td>
-      <td style="font-size:12px;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(r.clean_reply_summary)}">${esc(r.clean_reply_summary) || '<span style="color:#9ca3af">—</span>'}</td>
-      <td style="font-size:12px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(r.anto_notes)}">${esc(r.anto_notes) || '<span style="color:#9ca3af">—</span>'}</td>
+      <td style="font-size:12px">${_tdTrunc(r.reason, 200)}</td>
+      <td style="font-size:12px">${_tdTrunc(r.clean_reply_summary, 260)}</td>
+      <td style="font-size:12px">${_tdTrunc(r.anto_notes, 200)}</td>
     </tr>
   `).join('');
 }
 
-function _renderDiscordNotResponded() {
-  const tbody = document.getElementById('ds-nr-tbody');
-  if (!tbody || !_discordRows) return;
+function _renderDiscordSubTables() {
+  if (!_discordRows) return;
 
-  const search = (document.getElementById('ds-nr-search')?.value || '').trim().toLowerCase();
-  let rows = _discordRows.filter(r => !r.responded);
-
-  if (search) {
-    rows = rows.filter(r =>
-      r.tiktok_handle.toLowerCase().includes(search) ||
-      r.discord_handle_email.includes(search)
-    );
+  // Sub-table 1: Sent + Responded
+  const t1rows = _discordRows.filter(r => r.sent_via_instantly && r.responded);
+  const t1body = document.getElementById('ds-t1-tbody');
+  const h1 = document.getElementById('ds-s1-hint');
+  if (h1) h1.textContent = `— ${t1rows.length} leads`;
+  if (t1body) {
+    if (!t1rows.length) {
+      t1body.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#9ca3af;padding:24px">No results.</td></tr>';
+    } else {
+      t1body.innerHTML = t1rows.map(r => `
+        <tr>
+          <td style="font-size:12px">${esc(r.tiktok_handle) || '<span style="color:#9ca3af">—</span>'}</td>
+          <td style="font-family:monospace;font-size:12px">${esc(r.discord_handle_email)}</td>
+          <td>${_classificationBadge(r.classification)}</td>
+          <td style="font-size:12px">${esc(r.campaign_name) || '<span style="color:#9ca3af">—</span>'}</td>
+          <td style="font-size:12px">${esc(r.creator_handle) || '<span style="color:#9ca3af">—</span>'}</td>
+          <td style="font-size:12px">${_tdTrunc(r.reason, 200)}</td>
+          <td style="font-size:12px">${_tdTrunc(r.clean_reply_summary, 260)}</td>
+        </tr>
+      `).join('');
+    }
   }
 
-  if (!rows.length) {
-    tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:#9ca3af;padding:36px">${search ? 'No results for search.' : 'Everyone responded! 🎉'}</td></tr>`;
-    return;
+  // Sub-table 2: Sent + Not Responded (AUTO_REPLY or any future case)
+  const t2rows = _discordRows.filter(r => r.sent_via_instantly && !r.responded);
+  const t2body = document.getElementById('ds-t2-tbody');
+  const h2 = document.getElementById('ds-s2-hint');
+  const noteEl = document.getElementById('ds-s2-note');
+  if (h2) h2.textContent = `— ${t2rows.length} leads`;
+  if (noteEl) {
+    if (t2rows.length === 0) {
+      noteEl.style.display = '';
+      noteEl.textContent =
+        'Empty — because the Instantly dataset only stores inbound replies (all classified). ' +
+        'Every email found in Instantly has a human classification. ' +
+        'AUTO_REPLY leads (if any) would appear here.';
+    } else {
+      noteEl.style.display = 'none';
+    }
+  }
+  if (t2body) {
+    if (!t2rows.length) {
+      t2body.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#9ca3af;padding:24px">No results (see note above).</td></tr>';
+    } else {
+      t2body.innerHTML = t2rows.map(r => `
+        <tr>
+          <td style="font-size:12px">${esc(r.tiktok_handle) || '<span style="color:#9ca3af">—</span>'}</td>
+          <td style="font-family:monospace;font-size:12px">${esc(r.discord_handle_email)}</td>
+          <td style="font-size:12px">${esc(r.campaign_name) || '<span style="color:#9ca3af">—</span>'}</td>
+          <td style="font-size:12px">${_tdTrunc(r.anto_notes, 260)}</td>
+        </tr>
+      `).join('');
+    }
   }
 
-  tbody.innerHTML = rows.map(r => `
-    <tr>
-      <td>${esc(r.tiktok_handle) || '<span style="color:#9ca3af">—</span>'}</td>
-      <td style="font-family:monospace;font-size:12px">${esc(r.discord_handle_email)}</td>
-      <td style="font-size:12px">${esc(r.campaign_name) || '<span style="color:#9ca3af">—</span>'}</td>
-      <td style="font-size:12px">${esc(r.assigned_tag) || '<span style="color:#9ca3af">—</span>'}</td>
-      <td style="font-size:12px;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(r.anto_notes)}">${esc(r.anto_notes) || '<span style="color:#9ca3af">—</span>'}</td>
-    </tr>
-  `).join('');
+  // Sub-table 3: Not found in Instantly at all
+  const t3rows = _discordRows.filter(r => !r.sent_via_instantly);
+  const t3body = document.getElementById('ds-t3-tbody');
+  const h3 = document.getElementById('ds-s3-hint');
+  if (h3) h3.textContent = `— ${t3rows.length} leads`;
+  if (t3body) {
+    if (!t3rows.length) {
+      t3body.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#9ca3af;padding:24px">All emails were found in Instantly.</td></tr>';
+    } else {
+      t3body.innerHTML = t3rows.map(r => `
+        <tr>
+          <td style="font-size:12px">${esc(r.tiktok_handle) || '<span style="color:#9ca3af">—</span>'}</td>
+          <td style="font-family:monospace;font-size:12px">${esc(r.discord_handle_email)}</td>
+          <td style="font-size:12px">${esc(r.assigned_tag) || '<span style="color:#9ca3af">—</span>'}</td>
+          <td style="font-size:12px">${_tdTrunc(r.anto_notes, 260)}</td>
+        </tr>
+      `).join('');
+    }
+  }
 }
 
 let _discordListenersAttached = false;
 function _setupDiscordListeners() {
   if (_discordListenersAttached) return;
   _discordListenersAttached = true;
-
-  ['ds-search-email','ds-search-handle','ds-filter-responded','ds-filter-classification','ds-filter-campaign'].forEach(id => {
+  ['ds-search-email','ds-search-handle','ds-filter-sent','ds-filter-responded',
+   'ds-filter-classification','ds-filter-campaign'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.addEventListener('input', _renderDiscordTable);
   });
-
-  const nrSearch = document.getElementById('ds-nr-search');
-  if (nrSearch) nrSearch.addEventListener('input', _renderDiscordNotResponded);
 }
 
 function downloadDiscordSummaryCSV() {
   if (!_discordRows) return;
-  const headers = ['tiktok_handle','discord_handle_email','responded','classification','campaign_name','creator_handle','reason','clean_reply_summary','anto_notes','notes'];
+  const headers = ['tiktok_handle','discord_handle_email','sent_via_instantly','responded',
+                   'classification','campaign_name','creator_handle','reason','clean_reply_summary','anto_notes','notes'];
   const rows = _applyDiscordFilters(_discordRows);
-  const csv = [headers, ...rows.map(r => headers.map(h => `"${String(r[h] ?? '').replace(/"/g, '""')}"`))]
+  const csv = [headers, ...rows.map(r => headers.map(h => `"${String(r[h] ?? '').replace(/"/g,'""')}"`))]
     .map(r => r.join(',')).join('\n');
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
@@ -3043,14 +3145,25 @@ function downloadDiscordSummaryCSV() {
   a.click();
 }
 
-function downloadDiscordNotRespondedCSV() {
+function downloadDiscordSubCSV(bucket) {
   if (!_discordRows) return;
-  const headers = ['tiktok_handle','discord_handle_email','campaign_name','assigned_tag','notes'];
-  const rows = _discordRows.filter(r => !r.responded);
-  const csv = [headers, ...rows.map(r => headers.map(h => `"${String(r[h] ?? '').replace(/"/g, '""')}"`))]
+  let rows, filename;
+  if (bucket === 'responded') {
+    rows = _discordRows.filter(r => r.sent_via_instantly && r.responded);
+    filename = 'discord_responded.csv';
+  } else if (bucket === 'sent-not-responded') {
+    rows = _discordRows.filter(r => r.sent_via_instantly && !r.responded);
+    filename = 'discord_sent_not_responded.csv';
+  } else {
+    rows = _discordRows.filter(r => !r.sent_via_instantly);
+    filename = 'discord_not_in_instantly.csv';
+  }
+  const headers = ['tiktok_handle','discord_handle_email','sent_via_instantly','responded',
+                   'classification','campaign_name','creator_handle','reason','clean_reply_summary','anto_notes','notes'];
+  const csv = [headers, ...rows.map(r => headers.map(h => `"${String(r[h] ?? '').replace(/"/g,'""')}"`))]
     .map(r => r.join(',')).join('\n');
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
-  a.download = 'discord_not_responded.csv';
+  a.download = filename;
   a.click();
 }
