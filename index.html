@@ -25,6 +25,7 @@
     <li><button data-target="page-leadstatus">Lead Status</button></li>
     <li><button data-target="page-handle-lookup">Handle Lookup</button></li>
     <li><button data-target="page-closed-report">Campaign Closed Report</button></li>
+    <li><button data-target="page-discord-summary">Discord Sent Summary</button></li>
   </ul>
   <div class="topbar-meta">
     <span id="data-source-badge" class="data-source-badge" title=""></span>
@@ -872,7 +873,114 @@
 </div><!-- /page-closed-report -->
 
 
+<!-- ── Discord Sent Summary ──────────────────────────── -->
+<div class="page" id="page-discord-summary">
+
+  <div class="page-header">
+    <h2>Discord Sent Summary</h2>
+    <p class="page-subtitle">
+      Emails sent via Discord (CSV rows 408+) matched against the full Instantly all-time dataset.
+      <strong id="ds-meta-line">Loading…</strong>
+    </p>
+  </div>
+
+  <!-- KPI Cards -->
+  <div class="kpi-grid">
+    <div class="kpi-card" style="border-top:3px solid #2563eb">
+      <div class="kpi-label">Total Emails Sent</div>
+      <div class="kpi-value" id="ds-kpi-total">—</div>
+    </div>
+    <div class="kpi-card" style="border-top:3px solid #059669">
+      <div class="kpi-label">Responded</div>
+      <div class="kpi-value" id="ds-kpi-responded">—</div>
+    </div>
+    <div class="kpi-card" style="border-top:3px solid #dc2626">
+      <div class="kpi-label">Not Responded</div>
+      <div class="kpi-value" id="ds-kpi-not-responded">—</div>
+    </div>
+    <div class="kpi-card" style="border-top:3px solid #d97706">
+      <div class="kpi-label">Response Rate</div>
+      <div class="kpi-value" id="ds-kpi-rate">—</div>
+    </div>
+  </div>
+
+  <!-- Filters + Search -->
+  <div class="section-card">
+    <div class="section-header">
+      <h3>Discord Sent — Full List <span class="hint">— matched against all-time Instantly data</span></h3>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input type="text" id="ds-search-email"  placeholder="Search by email…"  style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;width:170px">
+        <input type="text" id="ds-search-handle" placeholder="Search by TikTok handle…" style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;width:180px">
+        <select id="ds-filter-responded" style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px">
+          <option value="">All</option>
+          <option value="yes">Responded</option>
+          <option value="no">Not Responded</option>
+        </select>
+        <select id="ds-filter-classification" style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px">
+          <option value="">All Classifications</option>
+          <option value="YES">YES</option>
+          <option value="INTERESTED">INTERESTED</option>
+          <option value="NO">NO</option>
+          <option value="NOT_INTERESTED">NOT_INTERESTED</option>
+          <option value="AUTO_REPLY">AUTO_REPLY</option>
+        </select>
+        <select id="ds-filter-campaign" style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;max-width:200px">
+          <option value="">All Campaigns</option>
+        </select>
+        <button class="btn-download" onclick="downloadDiscordSummaryCSV()">⬇ Download CSV</button>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table id="dsTable">
+        <thead>
+          <tr>
+            <th>TikTok Handle</th>
+            <th>Discord Email</th>
+            <th>Responded</th>
+            <th>Classification</th>
+            <th>Campaign</th>
+            <th>Creator Handle</th>
+            <th>Reason</th>
+            <th>Reply Summary</th>
+            <th>Notes (CSV)</th>
+          </tr>
+        </thead>
+        <tbody id="ds-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Not Responded Section -->
+  <div class="section-card" style="margin-top:24px">
+    <div class="section-header">
+      <h3>Not Responded List <span class="hint">— leads from Discord CSV (row 408+) with no Instantly reply</span></h3>
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input type="text" id="ds-nr-search" placeholder="Search…" style="padding:6px 10px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;width:200px">
+        <button class="btn-download" onclick="downloadDiscordNotRespondedCSV()">⬇ Download CSV</button>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table id="dsNrTable">
+        <thead>
+          <tr>
+            <th>TikTok Handle</th>
+            <th>Discord Email</th>
+            <th>Campaign (if known)</th>
+            <th>Assigned Tag</th>
+            <th>Notes</th>
+          </tr>
+        </thead>
+        <tbody id="ds-nr-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+</div><!-- /page-discord-summary -->
+
+
 <!-- ── Scripts ─────────────────────────────────────── -->
+<script src="discord_data.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="app.js"></script>
 

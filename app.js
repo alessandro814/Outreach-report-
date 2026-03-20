@@ -242,6 +242,7 @@ function setupTabs() {
       if (btn.dataset.target === 'page-ai') checkAIStatus();
       if (btn.dataset.target === 'page-leadstatus') renderTagStatus();
       if (btn.dataset.target === 'page-closed-report') renderClosedReport();
+      if (btn.dataset.target === 'page-discord-summary') renderDiscordSummary();
     });
   });
 }
@@ -2818,5 +2819,238 @@ function downloadClosedReportCSV() {
   const a = document.createElement('a');
   a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
   a.download = 'campaign_closed_report.csv';
+  a.click();
+}
+
+/* ═══════════════════════════════════════════════════
+   DISCORD SENT SUMMARY
+═══════════════════════════════════════════════════ */
+
+// Build the matched dataset once per render call
+function buildDiscordRows() {
+  if (typeof DISCORD_SENT_DATA === 'undefined') return [];
+
+  // Build a fast lookup: email → array of lead records (full all-time, never filtered)
+  const leadsByEmail = {};
+  D.leads.forEach(l => {
+    const key = l.email.trim().toLowerCase();
+    if (!leadsByEmail[key]) leadsByEmail[key] = [];
+    leadsByEmail[key].push(l);
+  });
+
+  // Also check config-tracked creators by email
+  const taggedByEmail = {};
+  if (typeof CONFIG_DATA !== 'undefined' && Array.isArray(CONFIG_DATA.creators)) {
+    CONFIG_DATA.creators.forEach(c => {
+      if (c.email) {
+        const key = c.email.trim().toLowerCase();
+        taggedByEmail[key] = c;
+      }
+    });
+  }
+
+  return DISCORD_SENT_DATA.map(row => {
+    const email = row.discord_handle_email;
+    const matches = leadsByEmail[email] || [];
+    const responded = matches.length > 0;
+
+    // Pick best lead record (prefer YES/INTERESTED)
+    let best = matches[0];
+    if (matches.length > 1) {
+      const priority = ['YES','INTERESTED','NO','NOT_INTERESTED','AUTO_REPLY'];
+      best = matches.slice().sort((a,b) =>
+        (priority.indexOf(a.classification) + 1 || 99) - (priority.indexOf(b.classification) + 1 || 99)
+      )[0];
+    }
+
+    const tagged = taggedByEmail[email];
+
+    return {
+      tiktok_handle:        row.tiktok_handle,
+      discord_handle_email: email,
+      responded:            responded,
+      classification:       best ? (best.classification || '') : '',
+      campaign_name:        best ? (best.campaign_name || '') : '',
+      creator_handle:       best ? (best.creator_handle || '') : '',
+      reason:               best ? (best.reason || '') : '',
+      clean_reply_summary:  best ? (best.clean_reply_summary || '') : '',
+      anto_notes:           row.anto_notes,
+      status:               row.status,
+      notes:                row.notes,
+      assigned_tag:         tagged ? (tagged.tag || '') : '',
+    };
+  });
+}
+
+let _discordRows = null;
+
+function renderDiscordSummary() {
+  _discordRows = buildDiscordRows();
+  _renderDiscordKPIs(_discordRows);
+  _populateDiscordCampaignFilter(_discordRows);
+  _renderDiscordTable();
+  _renderDiscordNotResponded();
+  _setupDiscordListeners();
+
+  const meta = document.getElementById('ds-meta-line');
+  if (meta) meta.textContent =
+    `${_discordRows.length} valid email rows from CSV row 408+, matched against ${D.leads.length.toLocaleString()} all-time Instantly leads.`;
+}
+
+function _renderDiscordKPIs(rows) {
+  const total      = rows.length;
+  const responded  = rows.filter(r => r.responded).length;
+  const notResp    = total - responded;
+  const rate       = total ? ((responded / total) * 100).toFixed(1) + '%' : '—';
+  set('ds-kpi-total',         total);
+  set('ds-kpi-responded',     responded);
+  set('ds-kpi-not-responded', notResp);
+  set('ds-kpi-rate',          rate);
+}
+
+function _populateDiscordCampaignFilter(rows) {
+  const sel = document.getElementById('ds-filter-campaign');
+  if (!sel) return;
+  const camps = [...new Set(rows.filter(r => r.campaign_name).map(r => r.campaign_name))].sort();
+  // Keep first "All Campaigns" option, rebuild the rest
+  while (sel.options.length > 1) sel.remove(1);
+  camps.forEach(c => {
+    const opt = document.createElement('option');
+    opt.value = c; opt.textContent = c;
+    sel.appendChild(opt);
+  });
+}
+
+function _getDiscordFilters() {
+  return {
+    email:          (document.getElementById('ds-search-email')?.value || '').trim().toLowerCase(),
+    handle:         (document.getElementById('ds-search-handle')?.value || '').trim().toLowerCase(),
+    responded:      document.getElementById('ds-filter-responded')?.value || '',
+    classification: document.getElementById('ds-filter-classification')?.value || '',
+    campaign:       document.getElementById('ds-filter-campaign')?.value || '',
+  };
+}
+
+function _applyDiscordFilters(rows) {
+  const f = _getDiscordFilters();
+  return rows.filter(r => {
+    if (f.email      && !r.discord_handle_email.includes(f.email)) return false;
+    if (f.handle     && !r.tiktok_handle.toLowerCase().includes(f.handle)) return false;
+    if (f.responded === 'yes' && !r.responded) return false;
+    if (f.responded === 'no'  &&  r.responded) return false;
+    if (f.classification && r.classification !== f.classification) return false;
+    if (f.campaign   && r.campaign_name !== f.campaign) return false;
+    return true;
+  });
+}
+
+function _classificationBadge(cls) {
+  const map = {
+    'YES':            'background:#dcfce7;color:#166534',
+    'INTERESTED':     'background:#dbeafe;color:#1e40af',
+    'NO':             'background:#fee2e2;color:#991b1b',
+    'NOT_INTERESTED': 'background:#fee2e2;color:#991b1b',
+    'AUTO_REPLY':     'background:#f3f4f6;color:#6b7280',
+  };
+  if (!cls) return '<span style="color:#9ca3af">—</span>';
+  const style = map[cls] || 'background:#f3f4f6;color:#374151';
+  return `<span style="${style};padding:2px 8px;border-radius:9999px;font-size:12px;font-weight:600">${esc(cls)}</span>`;
+}
+
+function _renderDiscordTable() {
+  const tbody = document.getElementById('ds-tbody');
+  if (!tbody || !_discordRows) return;
+
+  const rows = _applyDiscordFilters(_discordRows);
+
+  if (!rows.length) {
+    tbody.innerHTML = '<tr><td colspan="9" style="text-align:center;color:#9ca3af;padding:36px">No results match the current filters.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = rows.map(r => `
+    <tr>
+      <td>${esc(r.tiktok_handle) || '<span style="color:#9ca3af">—</span>'}</td>
+      <td style="font-family:monospace;font-size:12px">${esc(r.discord_handle_email)}</td>
+      <td style="text-align:center">
+        ${r.responded
+          ? '<span style="background:#dcfce7;color:#166534;padding:2px 8px;border-radius:9999px;font-size:12px;font-weight:600">Yes</span>'
+          : '<span style="background:#fee2e2;color:#991b1b;padding:2px 8px;border-radius:9999px;font-size:12px;font-weight:600">No</span>'}
+      </td>
+      <td>${_classificationBadge(r.classification)}</td>
+      <td style="font-size:12px">${esc(r.campaign_name) || '<span style="color:#9ca3af">—</span>'}</td>
+      <td style="font-size:12px">${esc(r.creator_handle) || '<span style="color:#9ca3af">—</span>'}</td>
+      <td style="font-size:12px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(r.reason)}">${esc(r.reason) || '<span style="color:#9ca3af">—</span>'}</td>
+      <td style="font-size:12px;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(r.clean_reply_summary)}">${esc(r.clean_reply_summary) || '<span style="color:#9ca3af">—</span>'}</td>
+      <td style="font-size:12px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(r.anto_notes)}">${esc(r.anto_notes) || '<span style="color:#9ca3af">—</span>'}</td>
+    </tr>
+  `).join('');
+}
+
+function _renderDiscordNotResponded() {
+  const tbody = document.getElementById('ds-nr-tbody');
+  if (!tbody || !_discordRows) return;
+
+  const search = (document.getElementById('ds-nr-search')?.value || '').trim().toLowerCase();
+  let rows = _discordRows.filter(r => !r.responded);
+
+  if (search) {
+    rows = rows.filter(r =>
+      r.tiktok_handle.toLowerCase().includes(search) ||
+      r.discord_handle_email.includes(search)
+    );
+  }
+
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:#9ca3af;padding:36px">${search ? 'No results for search.' : 'Everyone responded! 🎉'}</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = rows.map(r => `
+    <tr>
+      <td>${esc(r.tiktok_handle) || '<span style="color:#9ca3af">—</span>'}</td>
+      <td style="font-family:monospace;font-size:12px">${esc(r.discord_handle_email)}</td>
+      <td style="font-size:12px">${esc(r.campaign_name) || '<span style="color:#9ca3af">—</span>'}</td>
+      <td style="font-size:12px">${esc(r.assigned_tag) || '<span style="color:#9ca3af">—</span>'}</td>
+      <td style="font-size:12px;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(r.anto_notes)}">${esc(r.anto_notes) || '<span style="color:#9ca3af">—</span>'}</td>
+    </tr>
+  `).join('');
+}
+
+let _discordListenersAttached = false;
+function _setupDiscordListeners() {
+  if (_discordListenersAttached) return;
+  _discordListenersAttached = true;
+
+  ['ds-search-email','ds-search-handle','ds-filter-responded','ds-filter-classification','ds-filter-campaign'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('input', _renderDiscordTable);
+  });
+
+  const nrSearch = document.getElementById('ds-nr-search');
+  if (nrSearch) nrSearch.addEventListener('input', _renderDiscordNotResponded);
+}
+
+function downloadDiscordSummaryCSV() {
+  if (!_discordRows) return;
+  const headers = ['tiktok_handle','discord_handle_email','responded','classification','campaign_name','creator_handle','reason','clean_reply_summary','anto_notes','notes'];
+  const rows = _applyDiscordFilters(_discordRows);
+  const csv = [headers, ...rows.map(r => headers.map(h => `"${String(r[h] ?? '').replace(/"/g, '""')}"`))]
+    .map(r => r.join(',')).join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  a.download = 'discord_sent_summary.csv';
+  a.click();
+}
+
+function downloadDiscordNotRespondedCSV() {
+  if (!_discordRows) return;
+  const headers = ['tiktok_handle','discord_handle_email','campaign_name','assigned_tag','notes'];
+  const rows = _discordRows.filter(r => !r.responded);
+  const csv = [headers, ...rows.map(r => headers.map(h => `"${String(r[h] ?? '').replace(/"/g, '""')}"`))]
+    .map(r => r.join(',')).join('\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }));
+  a.download = 'discord_not_responded.csv';
   a.click();
 }
