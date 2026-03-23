@@ -12,7 +12,7 @@ const _isLocal = window.location.hostname === 'localhost' ||
 const AI_BASE_URL = _isLocal ? 'http://localhost:5000' : '';
 
 // ── localStorage key for dashboard data cache ────────────────────────────────
-const DATA_CACHE_KEY = 'instantly_dashboard_cache_v2';
+const DATA_CACHE_KEY = 'instantly_dashboard_cache_v3';
 
 // ── colours ──────────────────────────────────────────
 const COLORS = {
@@ -229,6 +229,22 @@ function updateDataSourceUI(source, lastUpdated, warning) {
       banner.style.display = 'none';
     }
   }
+
+  // Campaign-fallback badge — shown after first render cycle so getEffectiveCampaigns() has run
+  setTimeout(_updateCampaignSourceBadge, 100);
+}
+
+function _updateCampaignSourceBadge() {
+  // Trigger getEffectiveCampaigns to set _campaignSource
+  getEffectiveCampaigns();
+  const el = document.getElementById('campaign-source-badge');
+  if (!el) return;
+  if (window._campaignSource === 'derived') {
+    el.textContent = '⚠ Campaign stats derived from leads (static summary unavailable)';
+    el.style.display = '';
+  } else {
+    el.style.display = 'none';
+  }
 }
 
 /* ── Tabs ─────────────────────────────────────────────── */
@@ -261,8 +277,9 @@ function renderKPIs() {
   const totalInbound = totalYes + totalInt + totalNo + totalNI + totalAR;
   const pos          = totalYes + totalInt;
   const neg          = totalNo  + totalNI;
+  const effectiveCamps = getEffectiveCampaigns();
   const activeCamps  = dateFilter.mode === 'all'
-    ? D.campaigns.length
+    ? effectiveCamps.length
     : new Set(filtLeads.map(l => l.campaign_name)).size;
 
   set('kpi-camps',    activeCamps);
@@ -275,7 +292,7 @@ function renderKPIs() {
   set('kpi-ar',       totalAR);
   set('kpi-pos-rate', totalInbound > 0 ? (pos/totalInbound*100).toFixed(1)+'%' : '0%');
   set('kpi-neg-rate', totalInbound > 0 ? (neg/totalInbound*100).toFixed(1)+'%' : '0%');
-  set('kpi-zero',     D.campaigns.filter(x => x.total_inbound === 0).length);
+  set('kpi-zero',     effectiveCamps.filter(x => x.total_inbound === 0).length);
 }
 
 function set(id, val) { const el = document.getElementById(id); if (el) el.textContent = val; }
@@ -640,7 +657,7 @@ function downloadLeadsCSV() {
 
 function downloadCampaignCSV() {
   const { col, dir } = campSort;
-  const data = [...D.campaigns].sort((a,b) => {
+  const data = [...getEffectiveCampaigns()].sort((a,b) => {
     const av = typeof a[col]==='string' ? a[col].toLowerCase() : a[col];
     const bv = typeof b[col]==='string' ? b[col].toLowerCase() : b[col];
     return dir==='asc' ? (av > bv ? 1 : -1) : (av < bv ? 1 : -1);
@@ -1081,7 +1098,7 @@ function openAIPanel(email, campName) {
             || D.leads.find(l => l.email === email);
   if (!lead) return;
 
-  const campaign = D.campaigns.find(c => c.campaign_name === lead.campaign_name) || {};
+  const campaign = getEffectiveCampaigns().find(c => c.campaign_name === lead.campaign_name) || {};
   currentAILead     = lead;
   currentAICampaign = campaign;
 
@@ -1581,7 +1598,7 @@ function downloadNoReasonsCSV() {
 ═══════════════════════════════════════════════════ */
 
 function renderZeroReplyCampaigns() {
-  const zeros = D.campaigns.filter(c => c.total_inbound === 0);
+  const zeros = getEffectiveCampaigns().filter(c => c.total_inbound === 0);
   const countEl = document.getElementById('zero-count');
   if (countEl) countEl.textContent = `${zeros.length} campaigns`;
 
@@ -2232,11 +2249,31 @@ function campaignsFromLeads(leads) {
   });
 }
 
-// Returns D.campaigns for 'all time', otherwise computes from filtered leads
+// Returns true if D.campaigns has real data (at least one campaign with inbound > 0)
+function _campaignsAreValid() {
+  return Array.isArray(D.campaigns) &&
+    D.campaigns.length > 0 &&
+    D.campaigns.some(c => c.total_inbound > 0);
+}
+
+// Always returns a usable campaign list, deriving from leads if D.campaigns is broken/empty.
+// Sets window._campaignSource = 'static' | 'derived' for debug/badge display.
+function getEffectiveCampaigns() {
+  if (_campaignsAreValid()) {
+    window._campaignSource = 'static';
+    return D.campaigns;
+  }
+  // Fallback: derive from full lead dataset
+  window._campaignSource = 'derived';
+  return campaignsFromLeads(D.leads);
+}
+
+// Returns the date-filtered + campaign-valid set for use by charts and tables.
 function getFilteredCampaigns() {
-  return dateFilter.mode === 'all'
-    ? D.campaigns
-    : campaignsFromLeads(applyDateFilter(D.leads));
+  if (dateFilter.mode === 'all') return getEffectiveCampaigns();
+  // For a date range, derive from the filtered leads (always fresh)
+  window._campaignSource = window._campaignSource || 'derived';
+  return campaignsFromLeads(applyDateFilter(D.leads));
 }
 
 function applyDateFilter(leads) {
@@ -2493,7 +2530,6 @@ function updateDebugPanel() {
   if (!panel) return;
   const totalRaw    = D.leads.length;
   const afterDate   = applyDateFilter(D.leads).length;
-  // Simulate each filter stage independently on the date-filtered base
   const baseForDebug = applyDateFilter(D.leads);
   const afterTag    = tagFilter
     ? baseForDebug.filter(l => tagsMap[l.email]?.assigned_tag === tagFilter).length
@@ -2519,14 +2555,31 @@ function updateDebugPanel() {
   };
   const sourceLabels = { remote:'Live', cache:'Cached', bundled:'Bundled', empty:'Empty' };
   const sourceStr = sourceLabels[window._dataSource || 'bundled'] || (window._dataSource || 'Bundled');
+
+  // Campaign layer diagnostics
+  const effCamps       = getEffectiveCampaigns();
+  const campSrc        = window._campaignSource === 'derived' ? 'Derived from leads ⚠' : 'Static (data.json)';
+  const staticCampLen  = Array.isArray(D.campaigns) ? D.campaigns.length : 0;
+  const staticHasData  = D.campaigns && D.campaigns.some(c => c.total_inbound > 0);
+  const missingCamp    = D.leads.filter(l => !l.campaign_name || !l.campaign_name.trim()).length;
+  const distinctCamps  = new Set(D.leads.map(l => l.campaign_name).filter(Boolean)).size;
+
   panel.innerHTML = `
     <table class="debug-table">
+      <tr style="background:#f0f9ff"><td colspan="2" style="font-weight:700;color:#1e40af">Lead Layer</td></tr>
       <tr><td>Source in use</td><td><strong>${sourceStr}</strong></td></tr>
       <tr><td>Total raw rows loaded</td><td><strong>${totalRaw.toLocaleString()}</strong></td></tr>
+      <tr><td>Distinct campaigns (from leads)</td><td><strong>${distinctCamps}</strong></td></tr>
+      <tr><td>Leads missing campaign_name</td><td><strong>${missingCamp}</strong></td></tr>
       <tr><td>Rows after date filter</td><td><strong>${afterDate.toLocaleString()}</strong> <span style="color:#9ca3af;font-size:11px">(${filterLabels[dateFilter.mode] || dateFilter.mode}${dateFilter.mode === 'range' ? ` ${dateFilter.from || '…'}→${dateFilter.to || '…'}` : ''})</span></td></tr>
       <tr><td>Rows after tag filter</td><td><strong>${afterTag.toLocaleString()}</strong> <span style="color:#9ca3af;font-size:11px">${tagFilter ? `tag: ${tagFilter}` : 'no tag filter'}</span></td></tr>
       <tr><td>Rows after classification filter</td><td><strong>${afterClass.toLocaleString()}</strong> <span style="color:#9ca3af;font-size:11px">${leadsFilters.classification || (leadsFilters.positiveOnly ? 'positive only' : leadsFilters.autoOnly ? 'auto only' : 'none')}</span></td></tr>
       <tr><td>Rows after search (full dataset)</td><td><strong>${afterSearch.toLocaleString()}</strong> <span style="color:#9ca3af;font-size:11px">${leadsFilters.search ? `"${leadsFilters.search}"` : 'no search'}</span></td></tr>
+      <tr style="background:#f0f9ff"><td colspan="2" style="font-weight:700;color:#1e40af">Campaign Layer</td></tr>
+      <tr><td>Campaign summary source</td><td><strong>${campSrc}</strong></td></tr>
+      <tr><td>Static D.campaigns entries</td><td><strong>${staticCampLen}</strong> <span style="color:#9ca3af;font-size:11px">${staticHasData ? '(has data)' : '⚠ all zeros or empty'}</span></td></tr>
+      <tr><td>Effective campaigns shown</td><td><strong>${effCamps.length}</strong></td></tr>
+      <tr style="background:#f0f9ff"><td colspan="2" style="font-weight:700;color:#1e40af">Environment</td></tr>
       <tr><td>Current detected local date</td><td><strong>${localDate}</strong></td></tr>
       <tr><td>Active timezone</td><td><strong>${tz}</strong></td></tr>
     </table>
