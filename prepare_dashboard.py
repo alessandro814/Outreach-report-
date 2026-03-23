@@ -85,7 +85,7 @@ if not campaigns and os.path.exists(_LEADS_FILE_PREVIEW):
     _camp_counts = defaultdict(lambda: {'yes':0,'interested':0,'no':0,'not_interested':0,'auto_reply':0})
     for row in read_csv(_LEADS_FILE_PREVIEW):
         cn  = row.get('campaign_name', '').strip()
-        cls = row.get('classification', '').strip()
+        cls = row.get('classification', '').strip().lower()
         if cn and cls in _camp_counts[cn]:
             _camp_counts[cn][cls] += 1
     for camp_name, counts in sorted(_camp_counts.items()):
