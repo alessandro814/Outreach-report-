@@ -74,6 +74,45 @@ if os.path.exists('instantly_campaign_dashboard.csv'):
             'health_score':   round(pos * pos / total, 1) if total > 0 else 0,
         })
 
+# ── Fallback: derive campaigns from leads_report if CSV was empty ─────────────
+# This happens when instantly_reply_analyzer.py fails to write the campaign CSV
+# but the leads CSV was already populated (e.g. a previous run's leads remain).
+# Rates derived from inbound replies only (no total-sent denominator available here).
+_LEADS_FILE_PREVIEW = 'leads_report.csv' if os.path.exists('leads_report.csv') else 'instantly_leads_by_email.csv'
+if not campaigns and os.path.exists(_LEADS_FILE_PREVIEW):
+    print("WARNING: Campaign CSV is empty — deriving campaign aggregation from leads data (rates based on inbound replies, not sends).")
+    from collections import defaultdict
+    _camp_counts = defaultdict(lambda: {'yes':0,'interested':0,'no':0,'not_interested':0,'auto_reply':0})
+    for row in read_csv(_LEADS_FILE_PREVIEW):
+        cn  = row.get('campaign_name', '').strip()
+        cls = row.get('classification', '').strip()
+        if cn and cls in _camp_counts[cn]:
+            _camp_counts[cn][cls] += 1
+    for camp_name, counts in sorted(_camp_counts.items()):
+        yes  = counts['yes']
+        intr = counts['interested']
+        no   = counts['no']
+        ni   = counts['not_interested']
+        ar   = counts['auto_reply']
+        pos  = yes + intr
+        neg  = no + ni
+        total = yes + intr + no + ni + ar
+        campaigns.append({
+            'campaign_name':  camp_name,
+            'total_inbound':  total,
+            'yes':            yes,
+            'interested':     intr,
+            'no':             no,
+            'not_interested': ni,
+            'auto_reply':     ar,
+            'positive_total': pos,
+            'positive_rate':  round(pos / total * 100, 1) if total > 0 else 0,
+            'negative_rate':  round(neg / total * 100, 1) if total > 0 else 0,
+            'no_reply_rate':  round(no  / total * 100, 1) if total > 0 else 0,
+            'health_score':   round(pos * pos / total, 1) if total > 0 else 0,
+        })
+    print(f"Derived {len(campaigns)} campaigns from leads data.")
+
 REASONS = {
     'YES':            'Clear positive intent to proceed.',
     'INTERESTED':     'Asked for more details, samples, pricing, or information.',

@@ -195,6 +195,7 @@ async function initData() {
 
   // ── Set global D ─────────────────────────────────────────────────────────
   D = window.D = data;
+  window._dataSource = source;
 
   // ── Update UI ────────────────────────────────────────────────────────────
   updateDataSourceUI(source, data.last_updated, warning);
@@ -509,7 +510,15 @@ function resetLeadsFilters() {
   document.getElementById('filterClass').value = '';
   document.getElementById('btnPositive').classList.remove('active');
   document.getElementById('btnAuto').classList.remove('active');
-  leadsPage = 1; renderLeads();
+  // Also reset the global date filter so no leads are silently hidden
+  dateFilter = { mode: 'all', from: '', to: '' };
+  document.querySelectorAll('.date-btn[data-mode]').forEach(b => b.classList.remove('active'));
+  const allBtn = document.querySelector('.date-btn[data-mode="all"]');
+  if (allBtn) allBtn.classList.add('active');
+  const rangeInputs = document.getElementById('date-range-inputs');
+  if (rangeInputs) rangeInputs.style.display = 'none';
+  leadsPage = 1;
+  applyDateFilterToAll();
 }
 
 function setupLeadsSort() {
@@ -527,7 +536,11 @@ function setupLeadsSort() {
 
 function filteredLeads() {
   const { search, campaign, classification, positiveOnly, autoOnly } = leadsFilters;
-  let data = applyDateFilter(D.leads).filter(l => {
+  // When a search query is active, search the full unfiltered dataset so leads from
+  // outside the active date range are never silently hidden. Date filter still applies
+  // when browsing without a search term.
+  const base = search ? D.leads : applyDateFilter(D.leads);
+  let data = base.filter(l => {
     if (campaign       && l.campaign_name !== campaign)        return false;
     if (classification && l.classification !== classification) return false;
     if (positiveOnly   && !['YES','INTERESTED'].includes(l.classification)) return false;
@@ -2478,23 +2491,44 @@ function renderTodayMetrics() {
 function updateDebugPanel() {
   const panel = document.getElementById('debug-panel-body');
   if (!panel) return;
-  const totalRaw      = D.leads.length;
-  const withTimestamp = D.leads.filter(l => l.date).length;
-  const afterFilter   = applyDateFilter(D.leads).length;
-  const localDate     = todayStr();
-  const tz            = Intl.DateTimeFormat().resolvedOptions().timeZone;
-  const filterLabels  = {
+  const totalRaw    = D.leads.length;
+  const afterDate   = applyDateFilter(D.leads).length;
+  // Simulate each filter stage independently on the date-filtered base
+  const baseForDebug = applyDateFilter(D.leads);
+  const afterTag    = tagFilter
+    ? baseForDebug.filter(l => tagsMap[l.email]?.assigned_tag === tagFilter).length
+    : afterDate;
+  const afterClass  = leadsFilters.classification
+    ? baseForDebug.filter(l => l.classification === leadsFilters.classification).length
+    : (leadsFilters.positiveOnly
+        ? baseForDebug.filter(l => ['YES','INTERESTED'].includes(l.classification)).length
+        : (leadsFilters.autoOnly
+            ? baseForDebug.filter(l => l.classification === 'AUTO_REPLY').length
+            : afterDate));
+  const afterSearch = leadsFilters.search
+    ? D.leads.filter(l => {
+        const hay = (l.email+(l.creator_handle||'')+l.campaign_name+l.classification+l.reason+l.reply_text).toLowerCase();
+        return hay.includes(leadsFilters.search);
+      }).length
+    : afterDate;
+  const localDate  = todayStr();
+  const tz         = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const filterLabels = {
     all: 'All time', today: 'Today', yesterday: 'Yesterday',
     last7: 'Last 7 days', thismonth: 'This month', range: 'Custom range',
   };
+  const sourceLabels = { remote:'Live', cache:'Cached', bundled:'Bundled', empty:'Empty' };
+  const sourceStr = sourceLabels[window._dataSource || 'bundled'] || (window._dataSource || 'Bundled');
   panel.innerHTML = `
     <table class="debug-table">
+      <tr><td>Source in use</td><td><strong>${sourceStr}</strong></td></tr>
       <tr><td>Total raw rows loaded</td><td><strong>${totalRaw.toLocaleString()}</strong></td></tr>
-      <tr><td>Rows with valid timestamps</td><td><strong>${withTimestamp.toLocaleString()}</strong></td></tr>
-      <tr><td>Rows after current filter</td><td><strong>${afterFilter.toLocaleString()}</strong></td></tr>
+      <tr><td>Rows after date filter</td><td><strong>${afterDate.toLocaleString()}</strong> <span style="color:#9ca3af;font-size:11px">(${filterLabels[dateFilter.mode] || dateFilter.mode}${dateFilter.mode === 'range' ? ` ${dateFilter.from || '…'}→${dateFilter.to || '…'}` : ''})</span></td></tr>
+      <tr><td>Rows after tag filter</td><td><strong>${afterTag.toLocaleString()}</strong> <span style="color:#9ca3af;font-size:11px">${tagFilter ? `tag: ${tagFilter}` : 'no tag filter'}</span></td></tr>
+      <tr><td>Rows after classification filter</td><td><strong>${afterClass.toLocaleString()}</strong> <span style="color:#9ca3af;font-size:11px">${leadsFilters.classification || (leadsFilters.positiveOnly ? 'positive only' : leadsFilters.autoOnly ? 'auto only' : 'none')}</span></td></tr>
+      <tr><td>Rows after search (full dataset)</td><td><strong>${afterSearch.toLocaleString()}</strong> <span style="color:#9ca3af;font-size:11px">${leadsFilters.search ? `"${leadsFilters.search}"` : 'no search'}</span></td></tr>
       <tr><td>Current detected local date</td><td><strong>${localDate}</strong></td></tr>
       <tr><td>Active timezone</td><td><strong>${tz}</strong></td></tr>
-      <tr><td>Active filter</td><td><strong>${filterLabels[dateFilter.mode] || dateFilter.mode}${dateFilter.mode === 'range' ? ` (${dateFilter.from || '…'} → ${dateFilter.to || '…'})` : ''}</strong></td></tr>
     </table>
   `;
 }
