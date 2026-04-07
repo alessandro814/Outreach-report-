@@ -53,11 +53,11 @@ python3 upload_to_gsheets.py || echo "  WARNING: Google Sheets upload failed —
 
 # ── Step 5: Push updated data to GitHub → triggers Vercel auto-deploy ──────────
 echo ""
-echo "[5/5] Pushing data.js + data.json to GitHub (Vercel backup deploy)..."
-git add data.js data.json
-git diff --cached --quiet && echo "  No data changes — nothing to push." || (
+echo "[5/5] Pushing changes to GitHub..."
+git add -A
+git diff --cached --quiet && echo "  No changes — nothing to push." || (
   git commit -m "data: auto-update $(date '+%Y-%m-%d %H:%M')" && \
   git push origin main && \
-  echo "  Pushed — Vercel will redeploy in ~30 seconds."
+  echo "  Pushed."
 )
 echo ""
