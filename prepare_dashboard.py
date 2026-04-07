@@ -168,12 +168,16 @@ if not campaigns and not leads:
     import sys
     sys.exit(0)
 
+# data.js — browser bundle, keep lean (no reply text, compact JSON)
+_STRIP_FIELDS = {'reply_text', 'clean_reply_summary'}
+slim_leads = [{k: v for k, v in lead.items() if k not in _STRIP_FIELDS} for lead in leads]
+slim_data = {**data, 'leads': slim_leads}
 with open('data.js', 'w', encoding='utf-8') as f:
     f.write('const DASHBOARD_DATA = ')
-    json.dump(data, f, ensure_ascii=False, indent=2)
+    json.dump(slim_data, f, ensure_ascii=False, separators=(',', ':'))
     f.write(';\n')
 
-# Also write data.json (pure JSON) — used by the Vercel API server
+# data.json — full data with reply text, used by the Vercel API server
 with open('data.json', 'w', encoding='utf-8') as f:
     json.dump(data, f, ensure_ascii=False, indent=2)
 
